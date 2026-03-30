@@ -1,0 +1,56 @@
+kind: DataContract
+apiVersion: v3.0.0
+id: week4-brownfield-lineage-snapshots
+info:
+  title: Week 4 Brownfield Cartographer — Lineage Snapshots
+  version: 1.0.0
+  owner: week4-team
+  description: Graph snapshot of code/data nodes and relationships.
+servers:
+  local:
+    type: local
+    path: outputs/week4/lineage_snapshots.jsonl
+    format: jsonl
+terms:
+  usage: Internal lineage for attribution and blast radius.
+  limitations: git_commit must be 40 hex chars.
+schema:
+  snapshot_id:
+    type: string
+    format: uuid
+    required: true
+  codebase_root:
+    type: string
+    required: true
+  git_commit:
+    type: string
+    pattern: ^[a-f0-9]{40}$
+    required: true
+  nodes:
+    type: array
+    minItems: 1
+    required: true
+  edges:
+    type: array
+    required: true
+  captured_at:
+    type: string
+    format: iso8601
+    required: true
+quality:
+  type: SodaChecks
+  specification:
+    checks for lineage:
+    - row_count >= 1
+lineage:
+  upstream: []
+  downstream:
+  - id: week7-violation-attributor
+    description: ViolationAttributor consumes lineage for blame chains
+    fields_consumed:
+    - nodes
+    - edges
+    - git_commit
+    breaking_if_changed:
+    - edges
+    - nodes

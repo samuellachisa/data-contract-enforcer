@@ -1,0 +1,18 @@
+version: 2
+models:
+- name: events
+  description: Week 5 event store projection source.
+  columns:
+  - name: event_id
+    tests:
+    - not_null
+    - unique
+  - name: aggregate_id
+    tests:
+    - not_null
+  - name: sequence_number
+    tests:
+    - not_null
+  - name: event_type
+    tests:
+    - not_null

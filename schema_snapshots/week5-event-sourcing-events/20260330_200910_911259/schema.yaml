@@ -1,0 +1,33 @@
+contract_id: week5-event-sourcing-events
+captured_at: '2026-03-30T20:09:10Z'
+schema:
+  aggregate_id:
+    types:
+    - str
+  aggregate_type:
+    types:
+    - str
+  event_id:
+    types:
+    - str
+  event_type:
+    types:
+    - str
+  metadata:
+    types:
+    - dict
+  occurred_at:
+    types:
+    - str
+  payload:
+    types:
+    - dict
+  recorded_at:
+    types:
+    - str
+  schema_version:
+    types:
+    - str
+  sequence_number:
+    types:
+    - int

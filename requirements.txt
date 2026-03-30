@@ -1,0 +1,14 @@
+pandas>=2.0.0
+numpy>=1.24.0
+PyYAML>=6.0
+jsonschema>=4.20.0
+scikit-learn>=1.3.0
+# Optional (slow on first install): set USE_YDATA=1 to enable in generator.py
+# ydata-profiling>=4.6.0
+requests>=2.31.0
+
+# Optional: OpenAI embeddings for Extension 1 (falls back to HashingVectorizer if unset)
+openai>=1.0.0
+
+# PDF report (optional; report_data.json is always produced)
+fpdf2>=2.7.0

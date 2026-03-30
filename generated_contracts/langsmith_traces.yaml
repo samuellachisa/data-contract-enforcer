@@ -1,0 +1,65 @@
+kind: DataContract
+apiVersion: v3.0.0
+id: langsmith-trace-runs
+info:
+  title: LangSmith Trace Export — runs.jsonl
+  version: 1.0.0
+  owner: platform-team
+  description: Exported run records for AI contract extension checks.
+servers:
+  local:
+    type: local
+    path: outputs/traces/runs.jsonl
+    format: jsonl
+schema:
+  id:
+    type: string
+    format: uuid
+    required: true
+  name:
+    type: string
+    required: true
+  run_type:
+    type: string
+    enum:
+    - llm
+    - chain
+    - tool
+    - retriever
+    - embedding
+    required: true
+  start_time:
+    type: string
+    format: iso8601
+    required: true
+  end_time:
+    type: string
+    format: iso8601
+    required: true
+  total_tokens:
+    type: integer
+    minimum: 0
+    required: true
+  prompt_tokens:
+    type: integer
+    minimum: 0
+    required: true
+  completion_tokens:
+    type: integer
+    minimum: 0
+    required: true
+  total_cost:
+    type: number
+    minimum: 0.0
+    required: true
+quality:
+  type: SodaChecks
+  specification:
+    checks for traces:
+    - total_tokens = prompt_tokens + completion_tokens
+    - end_time > start_time
+lineage:
+  upstream: []
+  downstream:
+  - id: week7-ai-extensions
+    description: Trace schema enforcement

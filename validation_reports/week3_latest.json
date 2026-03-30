@@ -1,0 +1,137 @@
+{
+  "report_id": "59810cce-e5c1-48d0-960b-87609a25e9e7",
+  "contract_id": "week3-document-refinery-extractions",
+  "snapshot_id": "d277b59109d0f0606182e81efdb80603a5344cc0c707190bb5a6745ddf85a9e5",
+  "run_timestamp": "2026-03-30T20:26:41Z",
+  "total_checks": 10,
+  "passed": 7,
+  "failed": 3,
+  "warned": 0,
+  "errored": 0,
+  "results": [
+    {
+      "check_id": "week3.doc_id.uuid",
+      "column_name": "doc_id",
+      "check_type": "format",
+      "status": "PASS",
+      "actual_value": "invalid_count=0",
+      "expected": "uuid v4 pattern",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "doc_id must match UUID pattern."
+    },
+    {
+      "check_id": "week3.doc_id.unique",
+      "column_name": "doc_id",
+      "check_type": "unique",
+      "status": "PASS",
+      "actual_value": "duplicates=0",
+      "expected": "unique",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "doc_id must be unique per row."
+    },
+    {
+      "check_id": "week3.source_hash.pattern",
+      "column_name": "source_hash",
+      "check_type": "pattern",
+      "status": "PASS",
+      "actual_value": "failing_rows=0",
+      "expected": "^[a-f0-9]{64}$",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "source_hash must be 64 hex chars."
+    },
+    {
+      "check_id": "week3.extracted_facts.non_empty",
+      "column_name": "extracted_facts",
+      "check_type": "array",
+      "status": "PASS",
+      "actual_value": "empty=0",
+      "expected": "minItems>=1",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "extracted_facts must be non-empty."
+    },
+    {
+      "check_id": "week3.extracted_facts.confidence.range",
+      "column_name": "extracted_facts[*].confidence",
+      "check_type": "range",
+      "status": "FAIL",
+      "actual_value": "max=51.300, mean=1.641, min=0.500",
+      "expected": "max<=1.0, min>=0.0",
+      "severity": "CRITICAL",
+      "records_failing": 1,
+      "sample_failing": [
+        "ea31f401-08e6-4faf-a4eb-633060606715"
+      ],
+      "message": "confidence is float 0.0\u20131.0; breaking change if scaled to 0\u2013100."
+    },
+    {
+      "check_id": "week3.extracted_facts.entity_refs.relationship",
+      "column_name": "extracted_facts[*].entity_refs",
+      "check_type": "relationship",
+      "status": "FAIL",
+      "actual_value": "failing_facts=1",
+      "expected": "all refs in entities[].entity_id",
+      "severity": "CRITICAL",
+      "records_failing": 1,
+      "sample_failing": [
+        "d1e11608-8249-4416-9b70-b72cafef36ba"
+      ],
+      "message": "entity_refs must reference entity_id present in entities[]."
+    },
+    {
+      "check_id": "week3.entities.type.enum",
+      "column_name": "entities[*].type",
+      "check_type": "enum",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "{'PERSON', 'DATE', 'AMOUNT', 'LOCATION', 'ORG', 'OTHER'}",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "entity.type must be one of six enum values."
+    },
+    {
+      "check_id": "week3.processing_time_ms.positive",
+      "column_name": "processing_time_ms",
+      "check_type": "range",
+      "status": "PASS",
+      "actual_value": "failing=0",
+      "expected": "integer > 0",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "processing_time_ms must be positive int."
+    },
+    {
+      "check_id": "week3.extraction_model.pattern",
+      "column_name": "extraction_model",
+      "check_type": "pattern",
+      "status": "PASS",
+      "actual_value": "failing=0",
+      "expected": "^(claude|gpt)-",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "extraction_model must start with claude- or gpt-."
+    },
+    {
+      "check_id": "week3.extracted_facts.confidence.statistical_drift",
+      "column_name": "extracted_facts[*].confidence",
+      "check_type": "drift",
+      "status": "FAIL",
+      "actual_value": "current_mean=1.6415, baseline_mean=0.7238, dev_sigma=6.42",
+      "expected": "WARN if >2\u03c3, FAIL if >3\u03c3",
+      "severity": "HIGH",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Silent scale drift detection vs first-run baseline."
+    }
+  ]
+}

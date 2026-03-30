@@ -1,0 +1,61 @@
+{
+  "report_id": "e954a0be-fd70-4e7a-a25f-6e32758a2b0c",
+  "contract_id": "week5-event-sourcing-events",
+  "snapshot_id": "c2bff5b1c598cb1f8f660eb6294099c05bb6345b5203432fb2f5d68d3f490714",
+  "run_timestamp": "2026-03-30T20:27:03Z",
+  "total_checks": 4,
+  "passed": 4,
+  "failed": 0,
+  "warned": 0,
+  "errored": 0,
+  "results": [
+    {
+      "check_id": "week5.event_type.pascal",
+      "column_name": "event_type",
+      "check_type": "pattern",
+      "status": "PASS",
+      "actual_value": "count=0",
+      "expected": "PascalCase",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "event_type must be PascalCase."
+    },
+    {
+      "check_id": "week5.sequence_number.monotonic",
+      "column_name": "sequence_number",
+      "check_type": "ordering",
+      "status": "PASS",
+      "actual_value": "violations=0",
+      "expected": "strict +1 per aggregate, no dupes",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "sequence_number monotonic with no gaps/duplicates per aggregate_id."
+    },
+    {
+      "check_id": "week5.recorded_at.order",
+      "column_name": "recorded_at",
+      "check_type": "temporal",
+      "status": "PASS",
+      "actual_value": "failing=0",
+      "expected": "recorded_at >= occurred_at",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "recorded_at must be >= occurred_at."
+    },
+    {
+      "check_id": "week5.payload.jsonschema",
+      "column_name": "payload",
+      "check_type": "jsonschema",
+      "status": "PASS",
+      "actual_value": "failing=0",
+      "expected": "DocumentProcessed.json",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "payload must validate for registered event types."
+    }
+  ]
+}

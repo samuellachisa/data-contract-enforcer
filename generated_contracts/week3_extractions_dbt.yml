@@ -1,0 +1,18 @@
+version: 2
+models:
+- name: extractions
+  description: Week 3 extraction records (JSONL ingested as external table).
+  columns:
+  - name: doc_id
+    tests:
+    - not_null
+    - unique
+  - name: source_hash
+    tests:
+    - not_null
+  - name: extraction_model
+    tests:
+    - not_null
+  - name: processing_time_ms
+    tests:
+    - not_null

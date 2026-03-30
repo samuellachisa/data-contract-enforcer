@@ -1,0 +1,179 @@
+kind: DataContract
+apiVersion: v3.0.0
+id: week3-document-refinery-extractions
+info:
+  title: Week 3 Document Refinery — Extraction Records
+  version: 1.0.0
+  owner: week3-team
+  description: One record per processed document with extracted facts and entities.
+servers:
+  local:
+    type: local
+    path: outputs/week3/extractions.jsonl
+    format: jsonl
+terms:
+  usage: Internal inter-system data contract. Do not publish.
+  limitations: confidence must remain in 0.0–1.0 float range (not 0–100 int).
+schema:
+  doc_id:
+    type: string
+    format: uuid
+    required: true
+    unique: true
+    description: Primary key. UUIDv4 per document extraction run.
+  source_path:
+    type: string
+    required: true
+    minLength: 1
+    description: Absolute path or https URL of source document.
+  source_hash:
+    type: string
+    pattern: ^[a-f0-9]{64}$
+    required: true
+    description: SHA-256 of the source file.
+  extracted_facts:
+    type: array
+    minItems: 1
+    required: true
+    items:
+      fact_id:
+        type: string
+        format: uuid
+        required: true
+        unique: true
+      text:
+        type: string
+        required: true
+        minLength: 1
+      entity_refs:
+        type: array
+        items:
+          type: string
+          format: uuid
+      confidence:
+        type: number
+        minimum: 0.0
+        maximum: 1.0
+        required: true
+        description: Model confidence; breaking if scaled to 0–100 integer.
+      page_ref:
+        type: integer
+        required: false
+        nullable: true
+      source_excerpt:
+        type: string
+        required: true
+  entities:
+    type: array
+    required: true
+    items:
+      entity_id:
+        type: string
+        format: uuid
+        required: true
+      name:
+        type: string
+        required: true
+      type:
+        type: string
+        enum:
+        - PERSON
+        - ORG
+        - LOCATION
+        - DATE
+        - AMOUNT
+        - OTHER
+        required: true
+      canonical_value:
+        type: string
+        required: true
+  extraction_model:
+    type: string
+    required: true
+    pattern: ^(claude|gpt)-
+    description: Model identifier; must match claude-* or gpt-*.
+  processing_time_ms:
+    type: integer
+    minimum: 1
+    required: true
+    description: Wall-clock processing time in milliseconds; must be positive.
+  token_count:
+    type: object
+    required: true
+    properties:
+      input:
+        type: integer
+        minimum: 0
+      output:
+        type: integer
+        minimum: 0
+  extracted_at:
+    type: string
+    format: iso8601
+    required: true
+    description: Extraction completion timestamp (UTC Z).
+quality:
+  type: SodaChecks
+  specification:
+    checks for extractions:
+    - missing_count(doc_id) = 0
+    - duplicate_count(doc_id) = 0
+    - min(fact_confidence) >= 0.0
+    - max(fact_confidence) <= 1.0
+    - row_count >= 1
+lineage:
+  upstream: []
+  downstream:
+  - id: week3-document-refinery
+    description: Lineage edge PRODUCES from file::src/week3/extractor.py to pipeline::week3-document-refinery
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: cartographer.py
+    description: Lineage edge CONSUMES from pipeline::week3-document-refinery to file::src/week4/cartographer.py
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+profiling:
+  structural_engine: pandas-fallback
+  flat_row_count: 55
+  confidence_numeric_profile:
+    min: 0.5
+    max: 51.3
+    mean: 1.6414545454545453
+    p25: 0.61
+    p50: 0.71
+    p75: 0.88
+    p95: 0.953
+    p99: 24.12180000000004
+    stddev: 6.759173811315272
+  processing_time_ms_stats:
+    min: 258.0
+    max: 4944.0
+    mean: 2878.509090909091
+    p25: 2234.0
+    p50: 3064.0
+    p75: 3794.5
+    p95: 4817.4
+    p99: 4907.82
+    stddev: 1270.4227910814468
+llm_annotations:
+  column: extracted_facts.confidence
+  table: extractions
+  description: Inferred business column `extracted_facts.confidence` adjacent to ['doc_id', 'source_hash', 'extraction_model'].
+  business_rule: values for `extracted_facts.confidence` should remain consistent with historical profile
+  cross_column_relationship: See contract lineage.downstream for consumer fields.
+  samples:
+  - '0.71'
+  - '0.61'
+  - '0.61'
+  - '0.8'
+  - '0.53'
