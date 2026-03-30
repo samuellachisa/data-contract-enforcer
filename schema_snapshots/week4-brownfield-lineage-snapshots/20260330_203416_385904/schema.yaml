@@ -1,0 +1,29 @@
+contract_id: week4-brownfield-lineage-snapshots
+captured_at: '2026-03-30T20:34:16Z'
+schema:
+  snapshot_id:
+    type: string
+    format: uuid
+    required: true
+  codebase_root:
+    type: string
+    required: true
+  git_commit:
+    type: string
+    pattern: ^[a-f0-9]{40}$
+    required: true
+  nodes:
+    type: array
+    minItems: 1
+    required: true
+  edges:
+    type: array
+    required: true
+  captured_at:
+    type: string
+    format: iso8601
+    required: true
+  doc_id: {}
+  tags:
+    type: array
+    required: false

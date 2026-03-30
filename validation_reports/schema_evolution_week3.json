@@ -1,0 +1,78 @@
+{
+  "contract_id": "week3-document-refinery-extractions",
+  "snapshot_a": "20260330_203416_291549",
+  "snapshot_b": "20260330_203416_315315",
+  "diff": {
+    "added": [
+      "notes"
+    ],
+    "removed": [],
+    "type_changes": [
+      {
+        "field": "extracted_facts",
+        "from": "array",
+        "to": "object"
+      }
+    ],
+    "breaking_changes": [
+      {
+        "change_type": "Change type (breaking)",
+        "field": "extracted_facts",
+        "from": "array",
+        "to": "object"
+      }
+    ],
+    "compatible_changes": [
+      {
+        "change_type": "Add nullable column",
+        "field": "notes",
+        "verdict": "BACKWARD_COMPATIBLE"
+      }
+    ],
+    "compatibility_verdict": "BREAKING"
+  },
+  "migration_impact": {
+    "contract_id": "week3-document-refinery-extractions",
+    "compatibility_verdict": "BREAKING",
+    "breaking_fields": [
+      "extracted_facts"
+    ],
+    "diff": {
+      "added": [
+        "notes"
+      ],
+      "removed": [],
+      "type_changes": [
+        {
+          "field": "extracted_facts",
+          "from": "array",
+          "to": "object"
+        }
+      ],
+      "breaking_changes": [
+        {
+          "change_type": "Change type (breaking)",
+          "field": "extracted_facts",
+          "from": "array",
+          "to": "object"
+        }
+      ],
+      "compatible_changes": [
+        {
+          "change_type": "Add nullable column",
+          "field": "notes",
+          "verdict": "BACKWARD_COMPATIBLE"
+        }
+      ],
+      "compatibility_verdict": "BREAKING"
+    },
+    "migration_checklist": [
+      {
+        "task": "Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+        "owner": "downstream-team"
+      }
+    ],
+    "rollback_plan": "Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete."
+  },
+  "classification_taxonomy_used": "subset: type change and requiredness changes treated as breaking."
+}

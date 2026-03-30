@@ -731,6 +731,12 @@ def run_all(root: Path, out_dir: Path) -> None:
         evolved.setdefault("doc_id", sch.get("doc_id", {}))
         if cid == "week3-document-refinery-extractions":
             evolved["notes"] = {"type": "string", "required": False, "description": "Synthetic ADD for evolution demo"}
+            # Synthetic breaking change for the analyzer: mutate the top-level type of extracted_facts.
+            ef = evolved.get("extracted_facts", {})
+            if isinstance(ef, dict):
+                ef = dict(ef)
+                ef["type"] = "object"
+                evolved["extracted_facts"] = ef
         elif cid == "week5-event-sourcing-events":
             evolved["payload"] = {"type": "integer", "required": True}
         else:

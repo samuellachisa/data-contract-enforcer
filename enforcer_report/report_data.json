@@ -1,0 +1,48 @@
+{
+  "report_generated_at": "2026-03-30T20:42:41Z",
+  "data_health_score": 38.57,
+  "n_critical_contract_violations": 2,
+  "data_health_narrative": "Overall health is reduced by high-severity contract violations. Fix CRITICAL fields to prevent silent corruption downstream.",
+  "violations_this_week": [
+    {
+      "severity": "CRITICAL",
+      "description": "Week 2 Digital Courtroom: verdict records failed structured LLM output schema validation. Downstream AI consumers can ingest malformed scores or evidence and produce incorrect risk decisions.",
+      "check_id": "week2.verdict_record.schema"
+    },
+    {
+      "severity": "CRITICAL",
+      "description": "Week 3 Document Refinery: `extracted_facts[*].confidence` must stay a float in 0.0\u20131.0. Downstream systems that interpret confidence as a probability (Week 4 lineage attribution and any scoring consumers) may mis-rank or mis-blame changes.",
+      "check_id": "week3.extracted_facts.confidence.range"
+    },
+    {
+      "severity": "CRITICAL",
+      "description": "Week 3 Document Refinery: `extracted_facts[*].entity_refs` must reference IDs present in `entities[]`. Downstream lineage metadata can become inconsistent, breaking entity-aware attribution and any audit joins.",
+      "check_id": "week3.extracted_facts.entity_refs.relationship"
+    }
+  ],
+  "schema_changes_detected": [
+    "Week 3 extraction records: Field `extracted_facts` changed type from `array` to `object`. Breaking change requires coordinated consumer updates.",
+    "Week 5 event records: Field `payload` changed type from `object` to `integer`. Breaking change requires coordinated consumer updates."
+  ],
+  "ai_system_risk_assessment": [
+    "Embedding drift is within acceptable bounds.",
+    "LLM output schema violation rate is stable."
+  ],
+  "recommended_actions": [
+    {
+      "priority": 1,
+      "risk_reduction": "High",
+      "action": "Update `src/week3/extractor.py` so `extracted_facts[*].confidence` is emitted as a float in the 0.0\u20131.0 range (contract clause: `week3.extracted_facts.confidence.range`)."
+    },
+    {
+      "priority": 2,
+      "risk_reduction": "High",
+      "action": "Update `src/week3/extractor.py` so every `extracted_facts[*].entity_refs[]` value is an `entity_id` present in the same record\u2019s `entities[]` array (contract clause: `week3.extracted_facts.entity_refs.relationship`)."
+    },
+    {
+      "priority": 3,
+      "risk_reduction": "Low",
+      "action": "Re-run AI extensions after any model/prompt change and monitor `validation_reports/ai_metrics.json` for rising schema violation rate."
+    }
+  ]
+}

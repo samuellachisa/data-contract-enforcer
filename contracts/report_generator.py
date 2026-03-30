@@ -272,41 +272,80 @@ def generate_report() -> dict[str, Any]:
     try:
         from fpdf import FPDF
 
+        def _pdf_sanitize(s: Any) -> str:
+            t = str(s)
+            # FPDF core fonts are latin-1; replace common punctuation.
+            t = (
+                t.replace("—", "-")
+                .replace("–", "-")
+                .replace("’", "'")
+                .replace("“", '"')
+                .replace("”", '"')
+                .replace("…", "...")
+                .replace("`", "")
+                .replace(".", " ")
+                .replace("[", " ")
+                .replace("]", " ")
+                .replace("*", " ")
+                .replace("/", " ")
+                .replace("_", " ")
+                .replace("\n", " ")
+                .replace("\r", " ")
+            )
+            t = " ".join(t.split())
+            if len(t) > 240:
+                t = t[:237] + "..."
+            return t
+
         pdf = FPDF()
         pdf.set_auto_page_break(auto=True, margin=15)
         pdf.add_page()
         pdf.set_font("Helvetica", size=12)
+        w = pdf.w - pdf.l_margin - pdf.r_margin
 
-        pdf.multi_cell(0, 7, "TRP Week 7 — Data Contract Enforcer\n(Automatically generated report)")
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 7, _pdf_sanitize("TRP Week 7 — Data Contract Enforcer\n(Automatically generated report)"))
         pdf.ln(2)
-        pdf.set_font("Helvetica", size=11)
-        pdf.multi_cell(0, 7, f"Data Health Score: {score}/100\n")
-        pdf.multi_cell(0, 7, "Violations (top 3):")
+        pdf.set_font("Helvetica", size=10)
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 7, _pdf_sanitize(f"Data Health Score: {score}/100"))
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 7, _pdf_sanitize("Violations (top 3):"))
         for v in report_data["violations_this_week"]:
-            pdf.multi_cell(0, 6, f"- {v.get('severity')}: {v.get('description')}")
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(w, 6, _pdf_sanitize(f"- {v.get('severity')}: {v.get('description')}"))
         pdf.ln(1)
 
-        pdf.multi_cell(0, 7, "Schema changes detected:")
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 7, _pdf_sanitize("Schema changes detected:"))
         if schema_changes:
             for s in schema_changes:
-                pdf.multi_cell(0, 6, f"- {s}")
+                pdf.set_x(pdf.l_margin)
+                pdf.multi_cell(w, 6, _pdf_sanitize(f"- {s}"))
         else:
-            pdf.multi_cell(0, 6, "- No breaking schema changes detected in the last snapshots.")
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(w, 6, _pdf_sanitize("- No breaking schema changes detected in the last snapshots."))
         pdf.ln(1)
 
-        pdf.multi_cell(0, 7, "AI system risk assessment:")
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 7, _pdf_sanitize("AI system risk assessment:"))
         for part in ai_risk_parts:
-            pdf.multi_cell(0, 6, f"- {part}")
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(w, 6, _pdf_sanitize(f"- {part}"))
 
         pdf.ln(1)
-        pdf.multi_cell(0, 7, "Recommended actions:")
+        pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 7, _pdf_sanitize("Recommended actions:"))
         for a in recommended_actions:
-            pdf.multi_cell(0, 6, f"{a.get('priority')}. {a.get('action')}")
+            pdf.set_x(pdf.l_margin)
+            pdf.multi_cell(w, 6, _pdf_sanitize(f"{a.get('priority')}. {a.get('action')}"))
 
-        pdf.output(str(pdf_path))
+        pdf.output(str(pdf_path).replace("\\", "/"))
     except Exception:
         # Don't fail the pipeline if PDF generation fails.
-        pass
+        import traceback
+
+        traceback.print_exc()
 
     return report_data
 

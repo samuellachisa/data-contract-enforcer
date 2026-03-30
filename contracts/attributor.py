@@ -27,7 +27,7 @@ def _now_iso() -> str:
 def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
     with path.open("r", encoding="utf-8") as f:
         for line in f:
-            line = line.strip()
+            line = line.strip().lstrip("\ufeff")
             if not line:
                 continue
             if line.startswith("#") or line.startswith("//"):
