@@ -1,0 +1,21 @@
+{
+  "run_date": "2026-03-30",
+  "prompt_hash": "9c79deee3277",
+  "embedding_drift": {
+    "drift_score": 0.0,
+    "status": "PASS",
+    "threshold": 0.15,
+    "baseline_created": true
+  },
+  "prompt_input_validation": {
+    "quarantined_count": 0,
+    "status": "PASS"
+  },
+  "total_outputs": 25,
+  "schema_violations": 3,
+  "violation_rate": 0.12,
+  "trend": "stable",
+  "baseline_violation_rate": 0.12,
+  "status": "PASS",
+  "timestamp": "2026-03-30T20:32:03Z"
+}
