@@ -1,0 +1,278 @@
+#!/usr/bin/env python3
+"""
+AI Contract Extensions (Week 7)
+
+Implements:
+1) Embedding Drift Detection for Week 3 extracted_facts[*].text
+2) Prompt Input Schema Validation for Week 3 prompt inputs
+3) Structured LLM Output Enforcement for Week 2 verdict records
+
+Outputs:
+- validation_reports/ai_metrics.json
+- violation_log/violations_with_blame.jsonl is produced by attributor; here we append to violations.jsonl
+"""
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import os
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from jsonschema import validate
+from sklearn.feature_extraction.text import HashingVectorizer
+
+_REPO = Path(__file__).resolve().parents[1]
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _load_jsonl(path: Path) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line:
+                continue
+            if line.startswith("#") or line.startswith("//"):
+                continue
+            rows.append(json.loads(line))
+    return rows
+
+
+def _append_violation(path: Path, violation: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # If file doesn't exist, add injection comment.
+    if not path.exists():
+        path.write_text("# Auto-appended violations by ai_extensions.\n", encoding="utf-8")
+    with path.open("a", encoding="utf-8") as f:
+        f.write(json.dumps(violation, ensure_ascii=False) + "\n")
+
+
+def _embed_texts_hashing(texts: list[str], n_features: int = 384) -> np.ndarray:
+    vec = HashingVectorizer(
+        n_features=n_features,
+        alternate_sign=False,
+        norm="l2",
+        stop_words=None,
+    )
+    x = vec.transform(texts)
+    # Convert sparse matrix to dense for centroid math.
+    return x.toarray().astype(np.float32)
+
+
+def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 0.15) -> dict[str, Any]:
+    texts: list[str] = []
+    for r in extractions:
+        for f in r.get("extracted_facts") or []:
+            t = f.get("text")
+            if isinstance(t, str) and t.strip():
+                texts.append(t.strip())
+    if not texts:
+        return {"drift_score": 0.0, "status": "WARN", "threshold": threshold, "reason": "no texts"}
+
+    rng = np.random.default_rng(42)
+    sample_n = min(200, len(texts))
+    idx = rng.choice(len(texts), size=sample_n, replace=False)
+    sample_texts = [texts[i] for i in idx]
+
+    current = _embed_texts_hashing(sample_texts)
+    current_centroid = np.mean(current, axis=0)
+    current_centroid = current_centroid / (np.linalg.norm(current_centroid) + 1e-9)
+
+    baseline_path = _REPO / "schema_snapshots" / "embedding_baselines.npz"
+    if not baseline_path.exists():
+        np.savez(baseline_path, centroid=current_centroid)
+        return {"drift_score": 0.0, "status": "PASS", "threshold": threshold, "baseline_created": True}
+
+    base = np.load(baseline_path)
+    baseline_centroid = base["centroid"]
+    baseline_centroid = baseline_centroid / (np.linalg.norm(baseline_centroid) + 1e-9)
+
+    cosine_sim = float(np.dot(current_centroid, baseline_centroid))
+    drift = 1.0 - cosine_sim
+    drift = round(float(drift), 4)
+    status = "FAIL" if drift > threshold else "PASS"
+    return {
+        "drift_score": drift,
+        "status": status,
+        "threshold": threshold,
+    }
+
+
+def check_prompt_input_schema(extractions: list[dict[str, Any]]) -> dict[str, Any]:
+    schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["doc_id", "source_path", "content_preview"],
+        "properties": {
+            "doc_id": {"type": "string", "minLength": 1},
+            "source_path": {"type": "string", "minLength": 1},
+            "content_preview": {"type": "string", "maxLength": 8000},
+        },
+        "additionalProperties": False,
+    }
+
+    quarantined: list[dict[str, Any]] = []
+    for r in extractions:
+        doc_id = r.get("doc_id")
+        source_path = r.get("source_path")
+        # content_preview: first fact text (or placeholder)
+        facts = r.get("extracted_facts") or []
+        preview = ""
+        if facts and isinstance(facts, list) and isinstance(facts[0], dict):
+            preview = str(facts[0].get("text") or "")
+        record = {"doc_id": doc_id, "source_path": source_path, "content_preview": preview[:8000]}
+
+        try:
+            validate(instance=record, schema=schema)
+        except Exception:
+            quarantined.append({"prompt_input": record, "source_doc_id": doc_id})
+
+    status = "PASS" if not quarantined else "FAIL"
+    if quarantined:
+        ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        out = _REPO / "outputs" / "quarantine" / f"prompt_inputs_quarantine_{ts}.jsonl"
+        out.parent.mkdir(parents=True, exist_ok=True)
+        with out.open("w", encoding="utf-8") as f:
+            for q in quarantined:
+                f.write(json.dumps(q, ensure_ascii=False) + "\n")
+    return {"quarantined_count": len(quarantined), "status": status}
+
+
+def _verdict_json_schema() -> dict[str, Any]:
+    # Targets the schema in the prompt. We enforce the contract-critical fields.
+    return {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": [
+            "verdict_id",
+            "target_ref",
+            "rubric_id",
+            "rubric_version",
+            "scores",
+            "overall_verdict",
+            "overall_score",
+            "confidence",
+            "evaluated_at",
+        ],
+        "properties": {
+            "verdict_id": {"type": "string", "minLength": 1},
+            "target_ref": {"type": "string", "minLength": 1},
+            "rubric_id": {"type": "string", "minLength": 1},
+            "rubric_version": {"type": "string", "minLength": 1},
+            "scores": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": {
+                    "type": "object",
+                    "required": ["score", "evidence", "notes"],
+                    "properties": {
+                        "score": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "evidence": {"type": "array", "items": {"type": "string"}},
+                        "notes": {"type": "string"},
+                    },
+                },
+            },
+            "overall_verdict": {"type": "string", "enum": ["PASS", "FAIL", "WARN"]},
+            "overall_score": {"type": "number"},
+            "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
+            "evaluated_at": {"type": "string"},
+        },
+        "additionalProperties": True,
+    }
+
+
+def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
+    schema = _verdict_json_schema()
+    failures: list[dict[str, Any]] = []
+
+    for v in verdicts:
+        try:
+            validate(instance=v, schema=schema)
+        except Exception as e:
+            failures.append({"verdict_id": v.get("verdict_id"), "error": str(e)})
+
+    violation_rate = len(failures) / max(1, len(verdicts))
+
+    baseline_path = _REPO / "schema_snapshots" / "llm_violation_baseline.json"
+    if baseline_path.exists():
+        baseline_violation_rate = float(json.loads(baseline_path.read_text(encoding="utf-8")).get("baseline_violation_rate", 0.0))
+    else:
+        baseline_violation_rate = violation_rate
+        baseline_path.write_text(json.dumps({"baseline_violation_rate": baseline_violation_rate}), encoding="utf-8")
+
+    trend = "stable"
+    if violation_rate > baseline_violation_rate * 1.5 and violation_rate > baseline_violation_rate + 0.001:
+        trend = "rising"
+    status = "WARN" if trend == "rising" else "PASS"
+
+    # Append violation records for each failed item (bounded to keep output small).
+    for f in failures[:50]:
+        _append_violation(
+            _REPO / "violation_log" / "violations.jsonl",
+            {
+                "violation_id": str(uuid.uuid4()),
+                "type": "llm_output_schema",
+                "check_id": "week2.verdict_record.schema",
+                "detected_at": _now_iso(),
+                "message": f"Week 2 verdict record failed structured output schema validation: {f.get('error')}",
+                "source_contract_id": "week2-digital-courtroom-verdicts",
+                "verdict_id": f.get("verdict_id"),
+            },
+        )
+
+    return {
+        "total_outputs": len(verdicts),
+        "schema_violations": len(failures),
+        "violation_rate": round(float(violation_rate), 6),
+        "baseline_violation_rate": round(float(baseline_violation_rate), 6),
+        "trend": trend,
+        "status": status,
+        "failures_sample": failures[:5],
+    }
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="AI Contract Extensions (Week 7)")
+    args = parser.parse_args()
+    _ = args
+
+    extractions_path = _REPO / "outputs" / "week3" / "extractions.jsonl"
+    verdicts_path = _REPO / "outputs" / "week2" / "verdicts.jsonl"
+
+    extractions = _load_jsonl(extractions_path)
+    verdicts = _load_jsonl(verdicts_path)
+
+    embedding = check_embedding_drift(extractions)
+    prompt = check_prompt_input_schema(extractions)
+    llm = validate_llm_output_schema(verdicts)
+
+    metrics = {
+        "run_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+        "prompt_hash": hashlib.sha256(b"week3-prompt-input-schema-v1").hexdigest()[:12],
+        "embedding_drift": embedding,
+        "prompt_input_validation": prompt,
+        "total_outputs": llm["total_outputs"],
+        "schema_violations": llm["schema_violations"],
+        "violation_rate": llm["violation_rate"],
+        "trend": llm["trend"],
+        "baseline_violation_rate": llm["baseline_violation_rate"],
+        "status": llm["status"],
+        "timestamp": _now_iso(),
+    }
+
+    out = _REPO / "validation_reports" / "ai_metrics.json"
+    out.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    print(f"Wrote {out}")
+
+
+if __name__ == "__main__":
+    main()
+

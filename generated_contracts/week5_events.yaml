@@ -79,6 +79,12 @@ quality:
     - missing_count(event_id) = 0
     - missing_count(sequence_number) = 0
     - recorded_at >= occurred_at
+    - payload.bytes >= 0
+    - missing_count(metadata.correlation_id) = 0
+    - min(sequence_number) >= 0
+    - max(sequence_number) >= min(sequence_number)
+    - min(recorded_at) >= min(occurred_at)
+    - row_count >= 1
 lineage:
   upstream: []
   downstream:

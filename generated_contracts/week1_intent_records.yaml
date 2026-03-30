@@ -1,0 +1,85 @@
+kind: DataContract
+apiVersion: v3.0.0
+id: week1-intent-code-correlator-intent-records
+info:
+  title: Week 1 Intent-Code Correlator — Intent Records
+  version: 1.0.0
+  owner: week1-team
+  description: One record per inferred intent, including correlated code references and confidence.
+servers:
+  local:
+    type: local
+    path: outputs/week1/intent_records.jsonl
+    format: jsonl
+terms:
+  usage: Internal inter-system data contract. Do not publish.
+  limitations: intent_record.confidence must remain in 0.0–1.0.
+schema:
+  intent_id:
+    type: string
+    format: uuid
+    required: true
+    unique: true
+  description:
+    type: string
+    required: true
+    minLength: 1
+  code_refs:
+    type: array
+    required: true
+    minItems: 1
+    items:
+      type: object
+      required:
+      - file
+      - line_start
+      - line_end
+      - symbol
+      - confidence
+      properties:
+        file:
+          type: string
+          required: true
+          minLength: 1
+        line_start:
+          type: integer
+          required: true
+          minimum: 1
+        line_end:
+          type: integer
+          required: true
+          minimum: 1
+        symbol:
+          type: string
+          required: true
+          minLength: 1
+        confidence:
+          type: number
+          required: true
+          minimum: 0.0
+          maximum: 1.0
+  governance_tags:
+    type: array
+    required: true
+    items:
+      type: string
+      minLength: 1
+  created_at:
+    type: string
+    required: true
+    format: iso8601
+quality:
+  type: SodaChecks
+  specification:
+    checks for intents:
+    - row_count >= 1
+    - min(code_refs.confidence) >= 0.0
+    - max(code_refs.confidence) <= 1.0
+    - missing_count(intent_id) = 0
+    - duplicate_count(intent_id) = 0
+    - min(code_refs) >= 1
+lineage:
+  upstream: []
+  downstream:
+  - id: week2-digital-courtroom-verdicts
+    description: Digital Courtroom consumes intent target code references.

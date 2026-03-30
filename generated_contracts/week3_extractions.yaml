@@ -120,7 +120,13 @@ quality:
     - duplicate_count(doc_id) = 0
     - min(fact_confidence) >= 0.0
     - max(fact_confidence) <= 1.0
+    - missing_count(extracted_facts[*].fact_id) = 0
+    - duplicate_count(extracted_facts[*].fact_id) = 0
+    - min(extracted_facts[*].confidence) >= 0.0
+    - max(extracted_facts[*].confidence) <= 1.0
+    - min(processing_time_ms) >= 1
     - row_count >= 1
+    - max(cardinality(extracted_facts[*].entity_refs)) >= 0
 lineage:
   upstream: []
   downstream:

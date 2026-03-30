@@ -1,0 +1,72 @@
+kind: DataContract
+apiVersion: v3.0.0
+id: week2-digital-courtroom-verdicts
+info:
+  title: Week 2 Digital Courtroom — Verdict Records
+  version: 1.0.0
+  owner: week2-team
+  description: Structured LLM verdicts with per-criterion scores and overall verdict.
+servers:
+  local:
+    type: local
+    path: outputs/week2/verdicts.jsonl
+    format: jsonl
+terms:
+  usage: Internal inter-system contract for structured verdicts.
+  limitations: overall_verdict must be PASS|FAIL|WARN and scores must be integers 1–5.
+schema:
+  verdict_id:
+    type: string
+    format: uuid
+    required: true
+    unique: true
+  target_ref:
+    type: string
+    required: true
+    minLength: 1
+  rubric_id:
+    type: string
+    required: true
+    minLength: 1
+  rubric_version:
+    type: string
+    required: true
+    minLength: 1
+  scores:
+    type: object
+    required: true
+  overall_verdict:
+    type: string
+    required: true
+    enum:
+    - PASS
+    - FAIL
+    - WARN
+  overall_score:
+    type: number
+    required: true
+  confidence:
+    type: number
+    required: true
+    minimum: 0.0
+    maximum: 1.0
+  evaluated_at:
+    type: string
+    required: true
+    format: iso8601
+quality:
+  type: SodaChecks
+  specification:
+    checks for verdicts:
+    - missing_count(verdict_id) = 0
+    - duplicate_count(verdict_id) = 0
+    - overall_verdict in {'PASS','FAIL','WARN'}
+    - min(scores[*].score) >= 1
+    - max(scores[*].score) <= 5
+    - min(confidence) >= 0.0
+    - max(confidence) <= 1.0
+lineage:
+  upstream: []
+  downstream:
+  - id: week7-ai-extensions
+    description: AI Contract Extension validates structured output schema for verdicts.

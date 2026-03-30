@@ -280,7 +280,13 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                     "duplicate_count(doc_id) = 0",
                     "min(fact_confidence) >= 0.0",
                     "max(fact_confidence) <= 1.0",
+                    "missing_count(extracted_facts[*].fact_id) = 0",
+                    "duplicate_count(extracted_facts[*].fact_id) = 0",
+                    "min(extracted_facts[*].confidence) >= 0.0",
+                    "max(extracted_facts[*].confidence) <= 1.0",
+                    "min(processing_time_ms) >= 1",
                     "row_count >= 1",
+                    "max(cardinality(extracted_facts[*].entity_refs)) >= 0",
                 ]
             },
         },
@@ -386,6 +392,12 @@ def build_week5_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                     "missing_count(event_id) = 0",
                     "missing_count(sequence_number) = 0",
                     "recorded_at >= occurred_at",
+                    "payload.bytes >= 0",
+                    "missing_count(metadata.correlation_id) = 0",
+                    "min(sequence_number) >= 0",
+                    "max(sequence_number) >= min(sequence_number)",
+                    "min(recorded_at) >= min(occurred_at)",
+                    "row_count >= 1",
                 ]
             },
         },
@@ -483,6 +495,123 @@ def build_week4_contract(rows: list[dict], root: Path) -> dict[str, Any]:
     return contract
 
 
+def build_week1_contract(rows: list[dict], root: Path) -> dict[str, Any]:
+    # Structural contract for outputs/week1/intent_records.jsonl
+    return {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.0",
+        "id": "week1-intent-code-correlator-intent-records",
+        "info": {
+            "title": "Week 1 Intent-Code Correlator — Intent Records",
+            "version": "1.0.0",
+            "owner": "week1-team",
+            "description": "One record per inferred intent, including correlated code references and confidence.",
+        },
+        "servers": {
+            "local": {
+                "type": "local",
+                "path": "outputs/week1/intent_records.jsonl",
+                "format": "jsonl",
+            }
+        },
+        "terms": {
+            "usage": "Internal inter-system data contract. Do not publish.",
+            "limitations": "intent_record.confidence must remain in 0.0–1.0.",
+        },
+        "schema": {
+            "intent_id": {"type": "string", "format": "uuid", "required": True, "unique": True},
+            "description": {"type": "string", "required": True, "minLength": 1},
+            "code_refs": {
+                "type": "array",
+                "required": True,
+                "minItems": 1,
+                "items": {
+                    "type": "object",
+                    "required": ["file", "line_start", "line_end", "symbol", "confidence"],
+                    "properties": {
+                        "file": {"type": "string", "required": True, "minLength": 1},
+                        "line_start": {"type": "integer", "required": True, "minimum": 1},
+                        "line_end": {"type": "integer", "required": True, "minimum": 1},
+                        "symbol": {"type": "string", "required": True, "minLength": 1},
+                        "confidence": {"type": "number", "required": True, "minimum": 0.0, "maximum": 1.0},
+                    },
+                },
+            },
+            "governance_tags": {
+                "type": "array",
+                "required": True,
+                "items": {"type": "string", "minLength": 1},
+            },
+            "created_at": {"type": "string", "required": True, "format": "iso8601"},
+        },
+        "quality": {
+            "type": "SodaChecks",
+            "specification": {
+                "checks for intents": [
+                    "row_count >= 1",
+                    "min(code_refs.confidence) >= 0.0",
+                    "max(code_refs.confidence) <= 1.0",
+                    "missing_count(intent_id) = 0",
+                    "duplicate_count(intent_id) = 0",
+                    "min(code_refs) >= 1",
+                ]
+            },
+        },
+        "lineage": {"upstream": [], "downstream": [{"id": "week2-digital-courtroom-verdicts", "description": "Digital Courtroom consumes intent target code references."}]},
+    }
+
+
+def build_week2_contract(rows: list[dict], root: Path) -> dict[str, Any]:
+    return {
+        "kind": "DataContract",
+        "apiVersion": "v3.0.0",
+        "id": "week2-digital-courtroom-verdicts",
+        "info": {
+            "title": "Week 2 Digital Courtroom — Verdict Records",
+            "version": "1.0.0",
+            "owner": "week2-team",
+            "description": "Structured LLM verdicts with per-criterion scores and overall verdict.",
+        },
+        "servers": {
+            "local": {
+                "type": "local",
+                "path": "outputs/week2/verdicts.jsonl",
+                "format": "jsonl",
+            }
+        },
+        "terms": {
+            "usage": "Internal inter-system contract for structured verdicts.",
+            "limitations": "overall_verdict must be PASS|FAIL|WARN and scores must be integers 1–5.",
+        },
+        "schema": {
+            "verdict_id": {"type": "string", "format": "uuid", "required": True, "unique": True},
+            "target_ref": {"type": "string", "required": True, "minLength": 1},
+            "rubric_id": {"type": "string", "required": True, "minLength": 1},
+            "rubric_version": {"type": "string", "required": True, "minLength": 1},
+            "scores": {"type": "object", "required": True},
+            "overall_verdict": {"type": "string", "required": True, "enum": ["PASS", "FAIL", "WARN"]},
+            "overall_score": {"type": "number", "required": True},
+            "confidence": {"type": "number", "required": True, "minimum": 0.0, "maximum": 1.0},
+            "evaluated_at": {"type": "string", "required": True, "format": "iso8601"},
+        },
+        "quality": {
+            "type": "SodaChecks",
+            "specification": {
+                "checks for verdicts": [
+                    "missing_count(verdict_id) = 0",
+                    "duplicate_count(verdict_id) = 0",
+                    "overall_verdict in {'PASS','FAIL','WARN'}",
+                    "min(scores[*].score) >= 1",
+                    "max(scores[*].score) <= 5",
+                    "min(confidence) >= 0.0",
+                    "max(confidence) <= 1.0",
+                ]
+            },
+        },
+        "lineage": {"upstream": [], "downstream": [{"id": "week7-ai-extensions", "description": "AI Contract Extension validates structured output schema for verdicts."}]},
+    }
+
+
 def build_langsmith_contract(rows: list[dict], root: Path) -> dict[str, Any]:
     return {
         "kind": "DataContract",
@@ -571,6 +700,12 @@ def run_single_source(source: Path, out_dir: Path, root: Path) -> None:
 
 def run_all(root: Path, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
+    w1 = load_jsonl(root / "outputs" / "week1" / "intent_records.jsonl")
+    write_yaml(out_dir / "week1_intent_records.yaml", build_week1_contract(w1, root))
+
+    w2 = load_jsonl(root / "outputs" / "week2" / "verdicts.jsonl")
+    write_yaml(out_dir / "week2_verdicts.yaml", build_week2_contract(w2, root))
+
     w3 = load_jsonl(root / "outputs" / "week3" / "extractions.jsonl")
     write_yaml(out_dir / "week3_extractions.yaml", build_week3_contract(w3, root))
     _write_week3_dbt(out_dir)
