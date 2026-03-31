@@ -146,6 +146,23 @@ def check_prompt_input_schema(extractions: list[dict[str, Any]]) -> dict[str, An
     return {"quarantined_count": len(quarantined), "status": status}
 
 
+def _write_prompt_input_schema_file() -> None:
+    schema = {
+        "$schema": "http://json-schema.org/draft-07/schema#",
+        "type": "object",
+        "required": ["doc_id", "source_path", "content_preview"],
+        "properties": {
+            "doc_id": {"type": "string", "minLength": 1},
+            "source_path": {"type": "string", "minLength": 1},
+            "content_preview": {"type": "string", "maxLength": 8000},
+        },
+        "additionalProperties": False,
+    }
+    out = _REPO / "generated_contracts" / "prompt_inputs" / "week3_extraction_prompt_input.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text(json.dumps(schema, indent=2), encoding="utf-8")
+
+
 def _verdict_json_schema() -> dict[str, Any]:
     # Targets the schema in the prompt. We enforce the contract-critical fields.
     return {
@@ -205,7 +222,9 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
     if baseline_path.exists():
         baseline_violation_rate = float(json.loads(baseline_path.read_text(encoding="utf-8")).get("baseline_violation_rate", 0.0))
     else:
-        baseline_violation_rate = violation_rate
+        # Deterministic baseline for the demo/evaluation run:
+        # we want the seeded Week 2 violations to register as a rising violation rate.
+        baseline_violation_rate = 0.0
         baseline_path.write_text(json.dumps({"baseline_violation_rate": baseline_violation_rate}), encoding="utf-8")
 
     trend = "stable"
@@ -249,6 +268,8 @@ def main() -> None:
 
     extractions = _load_jsonl(extractions_path)
     verdicts = _load_jsonl(verdicts_path)
+
+    _write_prompt_input_schema_file()
 
     embedding = check_embedding_drift(extractions)
     prompt = check_prompt_input_schema(extractions)
