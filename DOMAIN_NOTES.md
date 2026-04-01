@@ -362,4 +362,7 @@ By combining structural constraints, statistical drift rules, lineage-based blam
 - **LLM annotations**: `contracts/generator.py` calls Anthropic (if `ANTHROPIC_API_KEY`) or OpenAI (if `OPENAI_API_KEY`); set `CONTRACT_LLM_OFF=1` for offline stub annotations.
 - **LangSmith**: `contracts/ai_extensions.py` validates `outputs/traces/runs.jsonl` and appends `langsmith_trace_schema` violations on failure.
 - **Migration impact**: `contracts/schema_analyzer.py` writes `validation_reports/migration_impact_<contract_id>_<timestamp>.json` alongside the main evolution JSON.
+- **Lineage in YAML**: `contracts/generator.py` collapses per-document `table::doc:{uuid}` nodes into **one** downstream consumer entry with `lineage_doc_node_count`, plus deduplicated FILE and PIPELINE consumers (readable contract artifact).
+- **dbt**: `week3_extractions_dbt.yml` / `week5_events_dbt.yml` define **extractions + exploded facts/entities/bridge** and **events + payload + metadata** models with `relationships` and `accepted_values`; singular SQL lives under `generated_contracts/dbt_tests/singular/`.
+- **Timestamps**: Generated contracts use JSON Schema–style `format: date-time` (RFC 3339) on datetime fields.
 

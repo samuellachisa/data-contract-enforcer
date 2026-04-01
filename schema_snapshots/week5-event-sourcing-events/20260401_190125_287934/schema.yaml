@@ -1,0 +1,65 @@
+contract_id: week5-event-sourcing-events
+captured_at: '2026-04-01T19:01:25Z'
+schema:
+  event_id:
+    type: string
+    format: uuid
+    required: true
+    unique: true
+  event_type:
+    type: string
+    required: true
+    pattern: ^[A-Z][a-zA-Z0-9]*$
+    description: PascalCase event type registered in event schema registry.
+  aggregate_id:
+    type: string
+    format: uuid
+    required: true
+  aggregate_type:
+    type: string
+    required: true
+    pattern: ^[A-Z][a-zA-Z0-9]*$
+  sequence_number:
+    type: integer
+    minimum: 0
+    required: true
+    description: Monotonic per aggregate_id, no gaps or duplicates.
+  payload:
+    type: object
+    required: true
+    description: Must validate against event_type JSON Schema.
+  metadata:
+    type: object
+    description: Required on each event; inner keys follow JSON Schema object form.
+    additionalProperties: false
+    required:
+    - correlation_id
+    - user_id
+    - source_service
+    properties:
+      causation_id:
+        oneOf:
+        - type: string
+          format: uuid
+        - type: 'null'
+        description: Prior event UUID when applicable; null otherwise.
+      correlation_id:
+        type: string
+        format: uuid
+      user_id:
+        type: string
+        minLength: 1
+      source_service:
+        type: string
+        minLength: 1
+  schema_version:
+    type: string
+    required: true
+  occurred_at:
+    type: string
+    format: date-time
+    required: true
+  recorded_at:
+    type: string
+    format: date-time
+    required: true

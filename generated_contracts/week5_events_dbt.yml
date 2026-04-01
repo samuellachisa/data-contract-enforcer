@@ -1,18 +1,82 @@
 version: 2
 models:
 - name: events
-  description: Week 5 event store projection source.
+  description: Append-only event log per aggregate. Aligns with `week5-event-sourcing-events`.
+    Payload validates per `event_schema_registry.json` / `event_payload_schemas/`.
   columns:
   - name: event_id
     tests:
     - not_null
     - unique
+  - name: event_type
+    description: PascalCase; registered types only.
+    tests:
+    - not_null
   - name: aggregate_id
     tests:
     - not_null
-  - name: sequence_number
+  - name: aggregate_type
     tests:
     - not_null
-  - name: event_type
+  - name: sequence_number
+    description: Monotonic per aggregate_id.
+    tests:
+    - not_null
+  - name: payload
+    tests:
+    - not_null
+  - name: metadata
+    tests:
+    - not_null
+  - name: schema_version
+    tests:
+    - not_null
+  - name: occurred_at
+    tests:
+    - not_null
+  - name: recorded_at
+    tests:
+    - not_null
+- name: event_document_processed_payload
+  description: Exploded payload for `DocumentProcessed` events — FK event_id to events.
+    Mirrors `DocumentProcessed.json` JSON Schema.
+  columns:
+  - name: event_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('events')
+        field: event_id
+  - name: doc_id
+    tests:
+    - not_null
+  - name: status
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - done
+        - failed
+        quote: true
+  - name: bytes
+    tests:
+    - not_null
+- name: event_metadata_exploded
+  description: Exploded `metadata` object; FK to events.event_id (unique per event
+    row).
+  columns:
+  - name: event_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('events')
+        field: event_id
+  - name: correlation_id
+    tests:
+    - not_null
+  - name: user_id
+    tests:
+    - not_null
+  - name: source_service
     tests:
     - not_null

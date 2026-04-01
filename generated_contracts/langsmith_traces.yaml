@@ -30,11 +30,11 @@ schema:
     required: true
   start_time:
     type: string
-    format: iso8601
+    format: date-time
     required: true
   end_time:
     type: string
-    format: iso8601
+    format: date-time
     required: true
   total_tokens:
     type: integer

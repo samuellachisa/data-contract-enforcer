@@ -35,6 +35,8 @@ python contracts/generator.py --all --output generated_contracts
 
 Evaluators may run: `python contracts/generator.py --source outputs/week3/extractions.jsonl --output generated_contracts/`
 
+Generated dbt schema YAML mirrors the Bitol contracts with **multiple models**, **`relationships`** (FK-style), **`accepted_values`** (enums), and **singular tests** under `generated_contracts/dbt_tests/singular/` (confidence 0–1, temporal order, payload.bytes).
+
 **3. ValidationRunner — Week 3 / Week 5 (required evaluator paths)**
 
 ```powershell

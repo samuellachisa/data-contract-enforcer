@@ -94,39 +94,141 @@ def _load_latest_lineage(root: Path) -> dict[str, Any] | None:
 
 
 def _downstream_for_dataset(lineage: dict[str, Any] | None, dataset_hint: str) -> list[dict[str, Any]]:
+    """
+    Build a small, reviewer-friendly downstream list (no per-document duplicate blocks).
+    Aggregates all table::doc:{uuid} nodes into one logical consumer entry with a count.
+    """
     if not lineage:
         return []
     nodes = {n["node_id"]: n for n in lineage.get("nodes", [])}
-    out: list[dict[str, Any]] = []
-    for e in lineage.get("edges", []):
-        src = e.get("source", "")
-        tgt = e.get("target", "")
-        if dataset_hint in src or dataset_hint in tgt:
-            tn = nodes.get(tgt, {})
-            label = tn.get("label", tgt)
+    edges = lineage.get("edges", [])
+    is_week3 = "week3" in dataset_hint or "week3-document-refinery" in dataset_hint
+    is_week5 = "week5" in dataset_hint or "event" in dataset_hint
+
+    if is_week3:
+        fields = ["doc_id", "extracted_facts", "extraction_model"]
+        breaking = ["extracted_facts.confidence", "doc_id"]
+        pipe = "pipeline::week3-document-refinery"
+        doc_table_count = 0
+        seen_file: set[str] = set()
+        seen_pipeline: set[str] = set()
+        for e in edges:
+            src, tgt = str(e.get("source", "")), str(e.get("target", ""))
+            if pipe not in src and pipe not in tgt:
+                continue
+            if src == pipe:
+                if tgt.startswith("table::doc:"):
+                    doc_table_count += 1
+                elif tgt.startswith("file::"):
+                    seen_file.add(tgt)
+                elif tgt.startswith("pipeline::"):
+                    seen_pipeline.add(tgt)
+        # Pipelines produced by downstream FILE consumers (e.g. cartographer → lineage generation)
+        for e in edges:
+            src, tgt = str(e.get("source", "")), str(e.get("target", ""))
+            if src in seen_file and tgt.startswith("pipeline::"):
+                seen_pipeline.add(tgt)
+        out: list[dict[str, Any]] = []
+        if doc_table_count > 0:
+            out.append(
+                {
+                    "id": "week4-lineage-document-table-nodes",
+                    "description": (
+                        "Week 4 Cartographer materialises one TABLE lineage node per extracted document "
+                        f"(`table::doc:{{uuid}}` pattern). Current snapshot: {doc_table_count} document node(s) "
+                        "linking refinery output to downstream graph traversal and blast-radius analysis."
+                    ),
+                    "fields_consumed": fields,
+                    "breaking_if_changed": breaking,
+                    "lineage_doc_node_count": doc_table_count,
+                }
+            )
+        for fid in sorted(seen_file):
+            meta = nodes.get(fid, {}).get("metadata", {}) or {}
+            label = str(meta.get("path", fid.replace("file::", "")))
             out.append(
                 {
                     "id": label,
-                    "description": f"Lineage edge {e.get('relationship')} from {src} to {tgt}",
-                    "fields_consumed": ["doc_id", "extracted_facts", "extraction_model"]
-                    if "week3" in dataset_hint
-                    else ["event_type", "payload", "sequence_number", "aggregate_id"],
-                    "breaking_if_changed": ["extracted_facts.confidence", "doc_id"]
-                    if "week3" in dataset_hint
-                    else ["payload", "event_type"],
+                    "description": f"Downstream file consumer `{fid}` (reads refinery / lineage context).",
+                    "fields_consumed": fields,
+                    "breaking_if_changed": breaking,
                 }
             )
-    return out
+        for pid in sorted(seen_pipeline):
+            out.append(
+                {
+                    "id": pid.replace("pipeline::", ""),
+                    "description": f"Downstream pipeline `{pid}`.",
+                    "fields_consumed": fields,
+                    "breaking_if_changed": breaking,
+                }
+            )
+        return out
+
+    if is_week5:
+        fields = ["event_type", "payload", "sequence_number", "aggregate_id"]
+        breaking = ["payload", "event_type"]
+        out_w5: list[dict[str, Any]] = []
+        for e in edges:
+            src, tgt = str(e.get("source", "")), str(e.get("target", ""))
+            if "week5" not in src and "week5" not in tgt:
+                continue
+            tn = nodes.get(tgt, {})
+            nid = str(tn.get("node_id", tgt))
+            if nid.startswith("file::") or tn.get("type") == "FILE":
+                label = str(tn.get("metadata", {}).get("path", tn.get("label", nid)))
+                out_w5.append(
+                    {
+                        "id": label,
+                        "description": f"Lineage edge {e.get('relationship')} from {src} to {tgt}",
+                        "fields_consumed": fields,
+                        "breaking_if_changed": breaking,
+                    }
+                )
+        # Dedupe by id
+        seen: set[str] = set()
+        deduped: list[dict[str, Any]] = []
+        for item in out_w5:
+            k = str(item.get("id"))
+            if k in seen:
+                continue
+            seen.add(k)
+            deduped.append(item)
+        return deduped
+
+    return []
 
 
-def _llm_annotations_stub(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any]:
+def _llm_annotations_stub(
+    column: str,
+    table: str,
+    samples: list[Any],
+    neighbors: list[str],
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    desc = (
+        f"Column `{column}` in `{table}`; neighbors: {neighbors}. "
+        "Treat as contract-critical: downstream validators and drift checks depend on stable semantics."
+    )
+    rule = (
+        f"Keep `{column}` distribution consistent with baseline (detect >2σ drift as WARN, >3σ as FAIL). "
+        "Breaking changes require migration impact report."
+    )
+    if profile and profile.get("max") is not None:
+        rule += (
+            f" Observed profile on this snapshot: min={profile.get('min')}, max={profile.get('max')}, "
+            f"mean={profile.get('mean')}, p95={profile.get('p95')}."
+        )
     return {
         "column": column,
         "table": table,
-        "description": f"Inferred business column `{column}` adjacent to {neighbors}.",
-        "business_rule": f"values for `{column}` should remain consistent with historical profile",
-        "cross_column_relationship": "See contract lineage.downstream for consumer fields.",
+        "description": desc,
+        "business_rule": rule,
+        "cross_column_relationship": "Join keys and consumer fields are listed under `lineage.downstream` in the data contract.",
         "samples": [str(s) for s in samples[:5]],
+        "statistical_context": (
+            {k: profile[k] for k in ("min", "max", "mean", "p95", "stddev") if profile and k in profile} or None
+        ),
     }
 
 
@@ -214,16 +316,26 @@ def _llm_annotate_anthropic(column: str, table: str, samples: list[Any], neighbo
         return None
 
 
-def _maybe_llm_annotate(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any]:
+def _maybe_llm_annotate(
+    column: str,
+    table: str,
+    samples: list[Any],
+    neighbors: list[str],
+    profile: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if os.environ.get("CONTRACT_LLM_OFF", "").strip() in ("1", "true", "yes"):
-        return _llm_annotations_stub(column, table, samples, neighbors)
+        return _llm_annotations_stub(column, table, samples, neighbors, profile=profile)
     out = _llm_annotate_anthropic(column, table, samples, neighbors)
     if out:
+        if profile:
+            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}
         return out
     out = _llm_annotate_openai(column, table, samples, neighbors)
     if out:
+        if profile:
+            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}
         return out
-    return _llm_annotations_stub(column, table, samples, neighbors)
+    return _llm_annotations_stub(column, table, samples, neighbors, profile=profile)
 
 
 def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
@@ -257,6 +369,7 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
         "extractions",
         [str(x) for x in confidences[:20]],
         ["doc_id", "source_hash", "extraction_model"],
+        profile=conf_stats or None,
     )
 
     contract: dict[str, Any] = {
@@ -304,33 +417,60 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                 "type": "array",
                 "minItems": 1,
                 "required": True,
+                "description": "Array of fact objects; items follow JSON Schema draft-07 object form.",
                 "items": {
-                    "fact_id": {"type": "string", "format": "uuid", "required": True, "unique": True},
-                    "text": {"type": "string", "required": True, "minLength": 1},
-                    "entity_refs": {"type": "array", "items": {"type": "string", "format": "uuid"}},
-                    "confidence": {
-                        "type": "number",
-                        "minimum": 0.0,
-                        "maximum": 1.0,
-                        "required": True,
-                        "description": "Model confidence; breaking if scaled to 0–100 integer.",
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": [
+                        "fact_id",
+                        "text",
+                        "entity_refs",
+                        "confidence",
+                        "source_excerpt",
+                    ],
+                    "properties": {
+                        "fact_id": {
+                            "type": "string",
+                            "format": "uuid",
+                            "description": "Unique fact id within the extraction record.",
+                            "unique": True,
+                        },
+                        "text": {"type": "string", "minLength": 1},
+                        "entity_refs": {
+                            "type": "array",
+                            "items": {"type": "string", "format": "uuid"},
+                        },
+                        "confidence": {
+                            "type": "number",
+                            "minimum": 0.0,
+                            "maximum": 1.0,
+                            "description": "Model confidence; breaking if scaled to 0–100 integer.",
+                        },
+                        "page_ref": {
+                            "oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}],
+                            "description": "1-based page index when applicable; null otherwise.",
+                        },
+                        "source_excerpt": {"type": "string", "minLength": 1},
                     },
-                    "page_ref": {"type": "integer", "required": False, "nullable": True},
-                    "source_excerpt": {"type": "string", "required": True},
                 },
             },
             "entities": {
                 "type": "array",
                 "required": True,
+                "minItems": 1,
                 "items": {
-                    "entity_id": {"type": "string", "format": "uuid", "required": True},
-                    "name": {"type": "string", "required": True},
-                    "type": {
-                        "type": "string",
-                        "enum": ["PERSON", "ORG", "LOCATION", "DATE", "AMOUNT", "OTHER"],
-                        "required": True,
+                    "type": "object",
+                    "additionalProperties": False,
+                    "required": ["entity_id", "name", "type", "canonical_value"],
+                    "properties": {
+                        "entity_id": {"type": "string", "format": "uuid"},
+                        "name": {"type": "string", "minLength": 1},
+                        "type": {
+                            "type": "string",
+                            "enum": ["PERSON", "ORG", "LOCATION", "DATE", "AMOUNT", "OTHER"],
+                        },
+                        "canonical_value": {"type": "string", "minLength": 1},
                     },
-                    "canonical_value": {"type": "string", "required": True},
                 },
             },
             "extraction_model": {
@@ -348,6 +488,8 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "token_count": {
                 "type": "object",
                 "required": True,
+                "description": "Non-negative input/output token counts; both keys required.",
+                "additionalProperties": False,
                 "properties": {
                     "input": {"type": "integer", "minimum": 0},
                     "output": {"type": "integer", "minimum": 0},
@@ -355,9 +497,9 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             },
             "extracted_at": {
                 "type": "string",
-                "format": "iso8601",
+                "format": "date-time",
                 "required": True,
-                "description": "Extraction completion timestamp (UTC Z).",
+                "description": "Extraction completion timestamp (RFC 3339 / ISO 8601 date-time).",
             },
         },
         "quality": {
@@ -391,25 +533,89 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
 
 
 def _write_week3_dbt(out_dir: Path) -> None:
-    yml = {
+    """
+    dbt schema mirroring week3-document-refinery-extractions: parent + exploded child models
+    with relationships, accepted_values, and singular SQL companions under generated_contracts/dbt_tests/.
+    """
+    rel_doc = {"relationships": {"to": "ref('extractions')", "field": "doc_id"}}
+    entity_enum = {"accepted_values": {"values": ["PERSON", "ORG", "LOCATION", "DATE", "AMOUNT", "OTHER"]}}
+    yml: dict[str, Any] = {
         "version": 2,
         "models": [
             {
                 "name": "extractions",
-                "description": "Week 3 extraction records (JSONL ingested as external table).",
+                "description": (
+                    "Parent table: one row per document extraction. Aligns with data contract "
+                    "`week3-document-refinery-extractions` (Bitol v3)."
+                ),
                 "columns": [
-                    {"name": "doc_id", "tests": ["not_null", "unique"]},
-                    {"name": "source_hash", "tests": ["not_null"]},
-                    {"name": "extraction_model", "tests": ["not_null"]},
-                    {"name": "processing_time_ms", "tests": ["not_null"]},
+                    {"name": "doc_id", "description": "Primary key UUIDv4.", "tests": ["not_null", "unique"]},
+                    {"name": "source_path", "description": "Absolute path or https URL.", "tests": ["not_null"]},
+                    {"name": "source_hash", "description": "SHA-256 hex (64 chars).", "tests": ["not_null"]},
+                    {"name": "extraction_model", "description": "Must start with claude- or gpt-.", "tests": ["not_null"]},
+                    {"name": "processing_time_ms", "description": "Positive integer.", "tests": ["not_null"]},
+                    {"name": "extracted_at", "description": "RFC 3339 date-time.", "tests": ["not_null"]},
+                    {"name": "token_count", "description": "Object with input/output token counts.", "tests": ["not_null"]},
                 ],
-            }
+            },
+            {
+                "name": "extraction_facts",
+                "description": (
+                    "Exploded `extracted_facts[]` — one row per fact. FK to extractions.doc_id. "
+                    "Confidence must remain float 0.0–1.0 per contract (see singular test)."
+                ),
+                "columns": [
+                    {"name": "doc_id", "tests": ["not_null", rel_doc]},
+                    {"name": "fact_id", "tests": ["not_null", "unique"]},
+                    {"name": "confidence", "tests": ["not_null"]},
+                    {"name": "text", "tests": ["not_null"]},
+                    {"name": "source_excerpt", "tests": ["not_null"]},
+                ],
+            },
+            {
+                "name": "extraction_entities",
+                "description": "Exploded `entities[]` — FK to extractions.doc_id; entity_type enum per contract.",
+                "columns": [
+                    {"name": "doc_id", "tests": ["not_null", rel_doc]},
+                    {"name": "entity_id", "tests": ["not_null", "unique"]},
+                    {"name": "entity_type", "tests": ["not_null", entity_enum]},
+                    {"name": "name", "tests": ["not_null"]},
+                    {"name": "canonical_value", "tests": ["not_null"]},
+                ],
+            },
+            {
+                "name": "extraction_fact_entity_refs",
+                "description": (
+                    "Bridge: each entity_ref on a fact must resolve to extraction_entities.entity_id "
+                    "for the same doc_id (dbt relationships test)."
+                ),
+                "columns": [
+                    {"name": "doc_id", "tests": ["not_null", rel_doc]},
+                    {"name": "fact_id", "tests": ["not_null", {"relationships": {"to": "ref('extraction_facts')", "field": "fact_id"}}]},
+                    {
+                        "name": "entity_id",
+                        "tests": [
+                            "not_null",
+                            {"relationships": {"to": "ref('extraction_entities')", "field": "entity_id"}},
+                        ],
+                    },
+                ],
+            },
         ],
     }
     path = out_dir / "week3_extractions_dbt.yml"
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("w", encoding="utf-8") as f:
         yaml.dump(yml, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    tests_dir = out_dir / "dbt_tests" / "singular"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "week3_extraction_facts_confidence_0_1.sql").write_text(
+        "-- Fails rows where per-fact confidence is outside [0,1] (contract clause extracted_facts.confidence).\n"
+        "select *\nfrom {{ ref('extraction_facts') }}\n"
+        "where confidence is null or confidence < 0 or confidence > 1\n",
+        encoding="utf-8",
+    )
 
 
 def build_week5_contract(rows: list[dict], root: Path) -> dict[str, Any]:
@@ -461,17 +667,22 @@ def build_week5_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "payload": {"type": "object", "required": True, "description": "Must validate against event_type JSON Schema."},
             "metadata": {
                 "type": "object",
-                "required": True,
+                "description": "Required on each event; inner keys follow JSON Schema object form.",
+                "additionalProperties": False,
+                "required": ["correlation_id", "user_id", "source_service"],
                 "properties": {
-                    "causation_id": {"type": ["string", "null"], "format": "uuid"},
-                    "correlation_id": {"type": "string", "format": "uuid", "required": True},
-                    "user_id": {"type": "string", "required": True},
-                    "source_service": {"type": "string", "required": True},
+                    "causation_id": {
+                        "oneOf": [{"type": "string", "format": "uuid"}, {"type": "null"}],
+                        "description": "Prior event UUID when applicable; null otherwise.",
+                    },
+                    "correlation_id": {"type": "string", "format": "uuid"},
+                    "user_id": {"type": "string", "minLength": 1},
+                    "source_service": {"type": "string", "minLength": 1},
                 },
             },
             "schema_version": {"type": "string", "required": True},
-            "occurred_at": {"type": "string", "format": "iso8601", "required": True},
-            "recorded_at": {"type": "string", "format": "iso8601", "required": True},
+            "occurred_at": {"type": "string", "format": "date-time", "required": True},
+            "recorded_at": {"type": "string", "format": "date-time", "required": True},
         },
         "quality": {
             "type": "SodaChecks",
@@ -495,30 +706,98 @@ def build_week5_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "events",
             [str(r.get("payload", {}).get("bytes")) for r in rows[:20]],
             ["event_type", "aggregate_id"],
+            profile=_numeric_stats(
+                [
+                    float(r.get("payload", {}).get("bytes"))
+                    for r in rows
+                    if isinstance(r.get("payload"), dict)
+                    and isinstance(r.get("payload", {}).get("bytes"), (int, float))
+                ]
+            )
+            or None,
         ),
     }
     return contract
 
 
 def _write_week5_dbt(out_dir: Path) -> None:
-    yml = {
+    payload_status = {"accepted_values": {"values": ["done", "failed"], "quote": True}}
+    yml: dict[str, Any] = {
         "version": 2,
         "models": [
             {
                 "name": "events",
-                "description": "Week 5 event store projection source.",
+                "description": (
+                    "Append-only event log per aggregate. Aligns with `week5-event-sourcing-events`. "
+                    "Payload validates per `event_schema_registry.json` / `event_payload_schemas/`."
+                ),
                 "columns": [
                     {"name": "event_id", "tests": ["not_null", "unique"]},
+                    {"name": "event_type", "description": "PascalCase; registered types only.", "tests": ["not_null"]},
                     {"name": "aggregate_id", "tests": ["not_null"]},
-                    {"name": "sequence_number", "tests": ["not_null"]},
-                    {"name": "event_type", "tests": ["not_null"]},
+                    {"name": "aggregate_type", "tests": ["not_null"]},
+                    {"name": "sequence_number", "description": "Monotonic per aggregate_id.", "tests": ["not_null"]},
+                    {"name": "payload", "tests": ["not_null"]},
+                    {"name": "metadata", "tests": ["not_null"]},
+                    {"name": "schema_version", "tests": ["not_null"]},
+                    {"name": "occurred_at", "tests": ["not_null"]},
+                    {"name": "recorded_at", "tests": ["not_null"]},
                 ],
-            }
+            },
+            {
+                "name": "event_document_processed_payload",
+                "description": (
+                    "Exploded payload for `DocumentProcessed` events — FK event_id to events. "
+                    "Mirrors `DocumentProcessed.json` JSON Schema."
+                ),
+                "columns": [
+                    {
+                        "name": "event_id",
+                        "tests": [
+                            "not_null",
+                            {"relationships": {"to": "ref('events')", "field": "event_id"}},
+                        ],
+                    },
+                    {"name": "doc_id", "tests": ["not_null"]},
+                    {"name": "status", "tests": ["not_null", payload_status]},
+                    {"name": "bytes", "tests": ["not_null"]},
+                ],
+            },
+            {
+                "name": "event_metadata_exploded",
+                "description": "Exploded `metadata` object; FK to events.event_id (unique per event row).",
+                "columns": [
+                    {
+                        "name": "event_id",
+                        "tests": [
+                            "not_null",
+                            {"relationships": {"to": "ref('events')", "field": "event_id"}},
+                        ],
+                    },
+                    {"name": "correlation_id", "tests": ["not_null"]},
+                    {"name": "user_id", "tests": ["not_null"]},
+                    {"name": "source_service", "tests": ["not_null"]},
+                ],
+            },
         ],
     }
     path = out_dir / "week5_events_dbt.yml"
     with path.open("w", encoding="utf-8") as f:
         yaml.dump(yml, f, default_flow_style=False, sort_keys=False, allow_unicode=True)
+
+    tests_dir = out_dir / "dbt_tests" / "singular"
+    tests_dir.mkdir(parents=True, exist_ok=True)
+    (tests_dir / "week5_events_recorded_gte_occurred.sql").write_text(
+        "-- Temporal contract: recorded_at >= occurred_at\n"
+        "select *\nfrom {{ ref('events') }}\n"
+        "where recorded_at < occurred_at\n",
+        encoding="utf-8",
+    )
+    (tests_dir / "week5_payload_bytes_non_negative.sql").write_text(
+        "-- DocumentProcessed payload.bytes >= 0\n"
+        "select *\nfrom {{ ref('event_document_processed_payload') }}\nwhere bytes < 0\n",
+        encoding="utf-8",
+    )
 
 
 def _write_event_payload_schema(root: Path) -> None:
@@ -565,7 +844,7 @@ def build_week4_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "git_commit": {"type": "string", "pattern": "^[a-f0-9]{40}$", "required": True},
             "nodes": {"type": "array", "minItems": 1, "required": True},
             "edges": {"type": "array", "required": True},
-            "captured_at": {"type": "string", "format": "iso8601", "required": True},
+            "captured_at": {"type": "string", "format": "date-time", "required": True},
         },
         "quality": {"type": "SodaChecks", "specification": {"checks for lineage": ["row_count >= 1"]}},
         "lineage": {
@@ -630,7 +909,7 @@ def build_week1_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                 "required": True,
                 "items": {"type": "string", "minLength": 1},
             },
-            "created_at": {"type": "string", "required": True, "format": "iso8601"},
+            "created_at": {"type": "string", "required": True, "format": "date-time"},
         },
         "quality": {
             "type": "SodaChecks",
@@ -680,7 +959,7 @@ def build_week2_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "overall_verdict": {"type": "string", "required": True, "enum": ["PASS", "FAIL", "WARN"]},
             "overall_score": {"type": "number", "required": True},
             "confidence": {"type": "number", "required": True, "minimum": 0.0, "maximum": 1.0},
-            "evaluated_at": {"type": "string", "required": True, "format": "iso8601"},
+            "evaluated_at": {"type": "string", "required": True, "format": "date-time"},
         },
         "quality": {
             "type": "SodaChecks",
@@ -720,8 +999,8 @@ def build_langsmith_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                 "enum": ["llm", "chain", "tool", "retriever", "embedding"],
                 "required": True,
             },
-            "start_time": {"type": "string", "format": "iso8601", "required": True},
-            "end_time": {"type": "string", "format": "iso8601", "required": True},
+            "start_time": {"type": "string", "format": "date-time", "required": True},
+            "end_time": {"type": "string", "format": "date-time", "required": True},
             "total_tokens": {"type": "integer", "minimum": 0, "required": True},
             "prompt_tokens": {"type": "integer", "minimum": 0, "required": True},
             "completion_tokens": {"type": "integer", "minimum": 0, "required": True},

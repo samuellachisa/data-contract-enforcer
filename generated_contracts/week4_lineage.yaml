@@ -35,7 +35,7 @@ schema:
     required: true
   captured_at:
     type: string
-    format: iso8601
+    format: date-time
     required: true
 quality:
   type: SodaChecks

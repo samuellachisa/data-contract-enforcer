@@ -44,33 +44,38 @@ schema:
     description: Must validate against event_type JSON Schema.
   metadata:
     type: object
-    required: true
+    description: Required on each event; inner keys follow JSON Schema object form.
+    additionalProperties: false
+    required:
+    - correlation_id
+    - user_id
+    - source_service
     properties:
       causation_id:
-        type:
-        - string
-        - 'null'
-        format: uuid
+        oneOf:
+        - type: string
+          format: uuid
+        - type: 'null'
+        description: Prior event UUID when applicable; null otherwise.
       correlation_id:
         type: string
         format: uuid
-        required: true
       user_id:
         type: string
-        required: true
+        minLength: 1
       source_service:
         type: string
-        required: true
+        minLength: 1
   schema_version:
     type: string
     required: true
   occurred_at:
     type: string
-    format: iso8601
+    format: date-time
     required: true
   recorded_at:
     type: string
-    format: iso8601
+    format: date-time
     required: true
 quality:
   type: SodaChecks
@@ -101,12 +106,21 @@ lineage:
 llm_annotations:
   column: payload.bytes
   table: events
-  description: Inferred business column `payload.bytes` adjacent to ['event_type', 'aggregate_id'].
-  business_rule: values for `payload.bytes` should remain consistent with historical profile
-  cross_column_relationship: See contract lineage.downstream for consumer fields.
+  description: 'Column `payload.bytes` in `events`; neighbors: [''event_type'', ''aggregate_id'']. Treat as contract-critical:
+    downstream validators and drift checks depend on stable semantics.'
+  business_rule: 'Keep `payload.bytes` distribution consistent with baseline (detect >2σ drift as WARN, >3σ as FAIL). Breaking
+    changes require migration impact report. Observed profile on this snapshot: min=7057.0, max=99992.0, mean=60029.490909090906,
+    p95=98053.09999999999.'
+  cross_column_relationship: Join keys and consumer fields are listed under `lineage.downstream` in the data contract.
   samples:
   - '48739'
   - '10171'
   - '82678'
   - '87951'
   - '95339'
+  statistical_context:
+    min: 7057.0
+    max: 99992.0
+    mean: 60029.490909090906
+    p95: 98053.09999999999
+    stddev: 29215.75241597819

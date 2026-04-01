@@ -1,8 +1,8 @@
 {
-  "report_id": "5f3cf9a6-ae02-416b-a33d-3df8f28f8140",
+  "report_id": "8aa005fc-385e-4b13-80e1-e50a327856f8",
   "contract_id": "week5-event-sourcing-events",
   "snapshot_id": "5a206b1eb978c529fdd75ea1872dad1ef206f6a8b8f8c19b9db13f8fcad3a733",
-  "run_timestamp": "2026-04-01T18:29:54Z",
+  "run_timestamp": "2026-04-01T19:00:22Z",
   "total_checks": 5,
   "passed": 5,
   "failed": 0,
@@ -58,16 +58,16 @@
       "message": "payload must validate for registered event types."
     },
     {
-      "check_id": "week5.payload.bytes.drift_baseline",
+      "check_id": "week5.payload.bytes.statistical_drift",
       "column_name": "payload.bytes",
       "check_type": "drift",
       "status": "PASS",
-      "actual_value": "baseline_established mean=60029.4909",
-      "expected": "first-run baseline",
+      "actual_value": "current_mean=60029.4909, baseline_mean=60029.4909, dev_sigma=0.00",
+      "expected": "WARN if >2\u03c3, FAIL if >3\u03c3",
       "severity": "LOW",
       "records_failing": 0,
       "sample_failing": [],
-      "message": "Established statistical baseline for payload.bytes.mean."
+      "message": "Statistical drift vs first-run baseline."
     }
   ]
 }

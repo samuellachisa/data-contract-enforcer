@@ -67,7 +67,7 @@ schema:
   created_at:
     type: string
     required: true
-    format: iso8601
+    format: date-time
 quality:
   type: SodaChecks
   specification:

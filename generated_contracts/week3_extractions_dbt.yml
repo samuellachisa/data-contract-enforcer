@@ -1,18 +1,108 @@
 version: 2
 models:
 - name: extractions
-  description: Week 3 extraction records (JSONL ingested as external table).
+  description: 'Parent table: one row per document extraction. Aligns with data contract
+    `week3-document-refinery-extractions` (Bitol v3).'
+  columns:
+  - name: doc_id
+    description: Primary key UUIDv4.
+    tests:
+    - not_null
+    - unique
+  - name: source_path
+    description: Absolute path or https URL.
+    tests:
+    - not_null
+  - name: source_hash
+    description: SHA-256 hex (64 chars).
+    tests:
+    - not_null
+  - name: extraction_model
+    description: Must start with claude- or gpt-.
+    tests:
+    - not_null
+  - name: processing_time_ms
+    description: Positive integer.
+    tests:
+    - not_null
+  - name: extracted_at
+    description: RFC 3339 date-time.
+    tests:
+    - not_null
+  - name: token_count
+    description: Object with input/output token counts.
+    tests:
+    - not_null
+- name: extraction_facts
+  description: Exploded `extracted_facts[]` — one row per fact. FK to extractions.doc_id.
+    Confidence must remain float 0.0–1.0 per contract (see singular test).
   columns:
   - name: doc_id
     tests:
     - not_null
+    - &id001
+      relationships:
+        to: ref('extractions')
+        field: doc_id
+  - name: fact_id
+    tests:
+    - not_null
     - unique
-  - name: source_hash
+  - name: confidence
     tests:
     - not_null
-  - name: extraction_model
+  - name: text
     tests:
     - not_null
-  - name: processing_time_ms
+  - name: source_excerpt
     tests:
     - not_null
+- name: extraction_entities
+  description: Exploded `entities[]` — FK to extractions.doc_id; entity_type enum
+    per contract.
+  columns:
+  - name: doc_id
+    tests:
+    - not_null
+    - *id001
+  - name: entity_id
+    tests:
+    - not_null
+    - unique
+  - name: entity_type
+    tests:
+    - not_null
+    - accepted_values:
+        values:
+        - PERSON
+        - ORG
+        - LOCATION
+        - DATE
+        - AMOUNT
+        - OTHER
+  - name: name
+    tests:
+    - not_null
+  - name: canonical_value
+    tests:
+    - not_null
+- name: extraction_fact_entity_refs
+  description: 'Bridge: each entity_ref on a fact must resolve to extraction_entities.entity_id
+    for the same doc_id (dbt relationships test).'
+  columns:
+  - name: doc_id
+    tests:
+    - not_null
+    - *id001
+  - name: fact_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('extraction_facts')
+        field: fact_id
+  - name: entity_id
+    tests:
+    - not_null
+    - relationships:
+        to: ref('extraction_entities')
+        field: entity_id
