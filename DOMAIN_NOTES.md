@@ -351,3 +351,15 @@ This Week 7 Enforcer addresses staleness in two complementary ways:
 
 By combining structural constraints, statistical drift rules, lineage-based blame-chain construction, and AI-specific output enforcement, the Data Contract Enforcer turns inter-system promises into executable, inspectable guarantees.
 
+---
+
+## Implementation supplement (post–Phase 4)
+
+- **Cross-system checks**: `contracts/runner.py --cross-dependencies` enforces (1) every Week 2 `target_ref` appears as a `code_refs.file` in Week 1 intents, and (2) every Week 3 `doc_id` has a matching `table::doc:{doc_id}` node in the latest Week 4 lineage snapshot (seeded in `scripts/seed_outputs.py`).
+- **Extended ValidationRunner**: Week 1, 2, 4, and LangSmith trace contracts are validated via `contracts/validation_checks.py`. Statistical drift baselines are tracked for Week 3 `processing_time_ms`, Week 5 `payload.bytes` (DocumentProcessed), and Week 1 / Week 2 confidence means (see `schema_snapshots/baselines.json`).
+- **ViolationAttributor**: Maps `check_id` to a lineage start node, runs `git blame -L` on the rank-1 file (with optional `blame_hint`), merges with `git show`, and sets `blast_radius.estimated_records` from `records_failing` when present. Enriched rows include `sentinel_ingest_version` for Week 8.
+- **Embeddings**: With `OPENAI_API_KEY`, Extension 1 uses `text-embedding-3-small` and stores centroids in `schema_snapshots/embedding_baselines.npz` with `embedding_baseline_meta.json`; otherwise `HashingVectorizer` is used (documented in `validation_reports/ai_metrics.json` as `backend`).
+- **LLM annotations**: `contracts/generator.py` calls Anthropic (if `ANTHROPIC_API_KEY`) or OpenAI (if `OPENAI_API_KEY`); set `CONTRACT_LLM_OFF=1` for offline stub annotations.
+- **LangSmith**: `contracts/ai_extensions.py` validates `outputs/traces/runs.jsonl` and appends `langsmith_trace_schema` violations on failure.
+- **Migration impact**: `contracts/schema_analyzer.py` writes `validation_reports/migration_impact_<contract_id>_<timestamp>.json` alongside the main evolution JSON.
+

@@ -10,7 +10,6 @@ import json
 import re
 import sys
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -21,7 +20,15 @@ _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from contracts.common import load_jsonl, load_yaml, repo_root
+from contracts.common import CheckResult, load_jsonl, load_yaml, repo_root
+from contracts.validation_checks import (
+    run_cross_system_validation,
+    validate_langsmith_runs,
+    validate_week1_intents,
+    validate_week2_verdicts,
+    validate_week4_lineage,
+    _apply_numeric_mean_drift,
+)
 
 
 UUID_RE = re.compile(
@@ -42,37 +49,6 @@ def _jsonl_snapshot_id(path: Path) -> str:
         for chunk in iter(lambda: f.read(65536), b""):
             h.update(chunk)
     return h.hexdigest()
-
-
-@dataclass
-class CheckResult:
-    check_id: str
-    column_name: str
-    check_type: str
-    status: str
-    actual_value: str
-    expected: str
-    severity: str
-    records_failing: int
-    sample_failing: list[str]
-    message: str
-
-
-def _baselines_path(root: Path) -> Path:
-    return root / "schema_snapshots" / "baselines.json"
-
-
-def _load_baselines(root: Path) -> dict[str, Any]:
-    p = _baselines_path(root)
-    if not p.exists():
-        return {}
-    return json.loads(p.read_text(encoding="utf-8"))
-
-
-def _save_baselines(root: Path, data: dict[str, Any]) -> None:
-    p = _baselines_path(root)
-    p.parent.mkdir(parents=True, exist_ok=True)
-    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def validate_week3_extractions(rows: list[dict], contract: dict[str, Any], root: Path) -> list[CheckResult]:
@@ -282,51 +258,28 @@ def validate_week3_extractions(rows: list[dict], contract: dict[str, Any], root:
         "extraction_model must start with claude- or gpt-.",
     )
 
-    # Statistical drift on confidence mean
-    baselines = _load_baselines(root)
-    key = f"{contract_id}::extracted_facts.confidence.mean"
-    m = float(np.mean(conf_values)) if conf_values else 0.0
-    s = float(np.std(conf_values)) if len(conf_values) > 1 else 0.0
-    if key not in baselines:
-        baselines[key] = {"mean": m, "std": max(s, 1e-9)}
-        _save_baselines(root, baselines)
-        add(
-            "week3.extracted_facts.confidence.drift",
-            "extracted_facts[*].confidence",
-            "drift",
-            "PASS",
-            f"baseline_established mean={m:.4f}",
-            "first-run baseline",
-            "LOW",
-            0,
-            [],
-            "Established statistical baseline for confidence mean.",
-        )
-    else:
-        bm = baselines[key]["mean"]
-        bsd = max(float(baselines[key].get("std", 0.0)), 1e-9)
-        dev = abs(m - bm) / bsd
-        if dev > 3:
-            drift_status = "FAIL"
-            sev = "HIGH"
-        elif dev > 2:
-            drift_status = "WARN"
-            sev = "MEDIUM"
-        else:
-            drift_status = "PASS"
-            sev = "LOW"
-        add(
-            "week3.extracted_facts.confidence.statistical_drift",
-            "extracted_facts[*].confidence",
-            "drift",
-            drift_status,
-            f"current_mean={m:.4f}, baseline_mean={bm:.4f}, dev_sigma={dev:.2f}",
-            "WARN if >2σ, FAIL if >3σ",
-            sev,
-            0,
-            [],
-            "Silent scale drift detection vs first-run baseline.",
-        )
+    _apply_numeric_mean_drift(
+        root,
+        contract_id,
+        "extracted_facts.confidence.mean",
+        conf_values,
+        add,
+        "week3.extracted_facts.confidence.drift_baseline",
+        "week3.extracted_facts.confidence.statistical_drift",
+        "extracted_facts[*].confidence",
+    )
+
+    proc_vals = [float(r.get("processing_time_ms")) for r in rows if isinstance(r.get("processing_time_ms"), int)]
+    _apply_numeric_mean_drift(
+        root,
+        contract_id,
+        "processing_time_ms.mean",
+        proc_vals,
+        add,
+        "week3.processing_time_ms.drift_baseline",
+        "week3.processing_time_ms.statistical_drift",
+        "processing_time_ms",
+    )
 
     return results
 
@@ -477,6 +430,26 @@ def validate_week5_events(rows: list[dict], contract: dict[str, Any], root: Path
             "Run ContractGenerator to emit event payload schema.",
         )
 
+    byte_vals: list[float] = []
+    for r in rows:
+        if str(r.get("event_type")) != "DocumentProcessed":
+            continue
+        pl = r.get("payload") or {}
+        b = pl.get("bytes")
+        if isinstance(b, (int, float)):
+            byte_vals.append(float(b))
+    if byte_vals:
+        _apply_numeric_mean_drift(
+            root,
+            contract_id,
+            "payload.bytes.mean",
+            byte_vals,
+            add,
+            "week5.payload.bytes.drift_baseline",
+            "week5.payload.bytes.statistical_drift",
+            "payload.bytes",
+        )
+
     return results
 
 
@@ -493,7 +466,15 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
 
     if "week3" in cid or "extraction" in cid:
         checks = validate_week3_extractions(rows, contract, root)
-    elif "week5" in cid or "event" in cid:
+    elif "week1" in cid and "intent" in cid:
+        checks = validate_week1_intents(rows, contract, root)
+    elif "week2" in cid and "verdict" in cid:
+        checks = validate_week2_verdicts(rows, contract, root)
+    elif "week4" in cid and "lineage" in cid:
+        checks = validate_week4_lineage(rows, contract, root)
+    elif "langsmith" in cid or "trace-runs" in cid:
+        checks = validate_langsmith_runs(rows, contract, root)
+    elif "week5" in cid or "event-sourcing" in cid:
         checks = validate_week5_events(rows, contract, root)
     else:
         checks = validate_generic_missing_column(contract)
@@ -504,7 +485,7 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
                 check_type="support",
                 status="ERROR",
                 actual_value=cid,
-                expected="week3 or week5",
+                expected="week1|week2|week3|week4|week5|langsmith",
                 severity="LOW",
                 records_failing=0,
                 sample_failing=[],
@@ -553,15 +534,31 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ValidationRunner (Week 7)")
-    parser.add_argument("--contract", type=Path, required=True)
-    parser.add_argument("--data", type=Path, required=True)
+    parser.add_argument("--contract", type=Path, default=None, help="generated_contracts/*.yaml")
+    parser.add_argument("--data", type=Path, default=None, help="outputs/.../*.jsonl")
     parser.add_argument("--output", type=Path, help="validation_reports/....json")
+    parser.add_argument(
+        "--cross-dependencies",
+        action="store_true",
+        help="Run explicit Week1→Week2 and Week3→Week4 cross-system contract checks.",
+    )
     args = parser.parse_args()
     root = repo_root()
     out = args.output
     if not out:
         ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         out = root / "validation_reports" / f"run_{ts}.json"
+
+    if args.cross_dependencies:
+        report = run_cross_system_validation(root)
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(report, indent=2), encoding="utf-8")
+        print(f"Wrote {out}")
+        return
+
+    if not args.contract or not args.data:
+        parser.error("Provide --contract and --data, or use --cross-dependencies")
+
     run_validation(args.contract.resolve(), args.data.resolve(), out, root)
 
 

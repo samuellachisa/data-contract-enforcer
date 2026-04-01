@@ -1,0 +1,101 @@
+{
+  "report_id": "99f84841-a5ef-46de-9c12-665d722fbbfe",
+  "contract_id": "week2-digital-courtroom-verdicts",
+  "snapshot_id": "fd53d04f8a98d873871152ae73c615cc8152d25a4eca41e448a4a2346a2f3b47",
+  "run_timestamp": "2026-04-01T18:29:55Z",
+  "total_checks": 7,
+  "passed": 6,
+  "failed": 1,
+  "warned": 0,
+  "errored": 0,
+  "results": [
+    {
+      "check_id": "week2.overall_verdict.enum",
+      "column_name": "overall_verdict",
+      "check_type": "enum",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "PASS|FAIL|WARN",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "overall_verdict must be PASS, FAIL, or WARN."
+    },
+    {
+      "check_id": "week2.scores.criterion.range",
+      "column_name": "scores[*].score",
+      "check_type": "range",
+      "status": "FAIL",
+      "actual_value": "invalid=3",
+      "expected": "integer 1\u20135",
+      "severity": "CRITICAL",
+      "records_failing": 3,
+      "sample_failing": [
+        "3f86398f-b0b4-42f4-8203-b1c3cbd8853a",
+        "c3031feb-3f2b-4162-a179-fa7090cbda90",
+        "c216664e-529c-4b67-8f7d-e24088fa8a67"
+      ],
+      "message": "Each criterion score must be integer 1\u20135."
+    },
+    {
+      "check_id": "week2.overall_score.weighted_mean",
+      "column_name": "overall_score",
+      "check_type": "computed",
+      "status": "PASS",
+      "actual_value": "mismatch=0",
+      "expected": "mean of integer criterion scores (equal weights)",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "overall_score must equal mean of valid integer scores (\u00b10.05)."
+    },
+    {
+      "check_id": "week2.rubric_id.sha256",
+      "column_name": "rubric_id",
+      "check_type": "hash",
+      "status": "PASS",
+      "actual_value": "mismatch=0",
+      "expected": "sha256(rubrics/sample_rubric.yaml)",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "rubric_id must match SHA-256 of rubrics/sample_rubric.yaml."
+    },
+    {
+      "check_id": "week2.rubric_version.semver",
+      "column_name": "rubric_version",
+      "check_type": "semver",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "semver",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "rubric_version must look like semantic version x.y.z."
+    },
+    {
+      "check_id": "week2.confidence.range",
+      "column_name": "confidence",
+      "check_type": "range",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "0.0\u20131.0",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "confidence must be 0.0\u20131.0."
+    },
+    {
+      "check_id": "week2.confidence.drift_baseline",
+      "column_name": "confidence",
+      "check_type": "drift",
+      "status": "PASS",
+      "actual_value": "baseline_established mean=0.7992",
+      "expected": "first-run baseline",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Established statistical baseline for confidence.mean."
+    }
+  ]
+}

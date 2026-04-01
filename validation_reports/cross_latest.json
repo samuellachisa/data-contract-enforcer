@@ -1,0 +1,37 @@
+{
+  "report_id": "29e268a4-d01e-4673-ab07-6a73696e47ec",
+  "contract_id": "cross-system-dependencies",
+  "snapshot_id": "e620f3615ec0a41bd6361b4675d95f1b015b370b822165a7eb692256659061fd",
+  "run_timestamp": "2026-04-01T18:29:57Z",
+  "total_checks": 2,
+  "passed": 2,
+  "failed": 0,
+  "warned": 0,
+  "errored": 0,
+  "results": [
+    {
+      "check_id": "cross.week2.target_ref.in_week1_code_refs",
+      "column_name": "verdict_record.target_ref",
+      "check_type": "relationship",
+      "status": "PASS",
+      "actual_value": "mismatch=0",
+      "expected": "target_ref \u2208 \u22c3 intent_record.code_refs.file",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Week 2 target_ref must reference a file path produced by Week 1 code_refs."
+    },
+    {
+      "check_id": "cross.week4.doc_id.as_lineage_node",
+      "column_name": "lineage.nodes",
+      "check_type": "relationship",
+      "status": "PASS",
+      "actual_value": "missing_nodes=0",
+      "expected": "table::doc:{doc_id} for each extraction",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Each Week 3 doc_id must appear as table::doc:{doc_id} in latest lineage snapshot."
+    }
+  ]
+}

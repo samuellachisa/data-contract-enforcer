@@ -148,6 +148,501 @@ lineage:
     breaking_if_changed:
     - extracted_facts.confidence
     - doc_id
+  - id: doc:fac23646…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:fac23646-7a13-40d5-b816-42fea69a1ba9
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:0cfff685…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:0cfff685-62e9-410b-aff9-7692d8ff6765
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:2f57d50d…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:2f57d50d-ac2a-4aa2-af1e-047bf7423e35
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:feb34b34…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:feb34b34-b2fc-470a-9f1b-90323d28398c
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:1a9fce0b…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:1a9fce0b-efa8-4c64-8928-90a330abe64c
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:5314ac83…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:5314ac83-a186-4a7c-acbe-4da3aad0fca7
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:a4c25688…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:a4c25688-bb33-4444-8212-cc299222dcb0
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:83593a46…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:83593a46-71c9-4ed2-8669-626af56d12db
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:6063c467…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:6063c467-04a5-48fb-b57f-0ef981d7fc39
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:d6607db9…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:d6607db9-a2e5-4b25-a3cc-3f48c890a903
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:657b02bb…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:657b02bb-eefd-4bdb-a4db-bd4dae9dbb36
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:f49a0ba0…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:f49a0ba0-e6d9-42f3-999c-5f55ad3a996c
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:f93c1b73…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:f93c1b73-c185-4cf9-89f1-596896e46362
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:d3bde2bc…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:d3bde2bc-7a84-4a84-a267-fe48b7cade3c
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:458ae8cd…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:458ae8cd-5454-4adc-844f-86593d47532e
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:e67dd057…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:e67dd057-7158-4ce4-b2d3-edcf7dc3df54
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:30fd4fec…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:30fd4fec-e073-4c29-80a2-2e9d4170dbea
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:20de3e40…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:20de3e40-d1ac-4fa5-9ed6-285b4a7de98e
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:fcfc3d90…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:fcfc3d90-f191-4c39-9e73-a04e411c81a7
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:686351d3…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:686351d3-a71b-4059-8dd0-836c59e4b7d1
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:b00d04a4…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:b00d04a4-63ea-4ba2-ad2c-d29ff1040d14
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:210f478c…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:210f478c-ba30-4e9b-856c-8f65a4db3fe8
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:505fcf79…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:505fcf79-a4b1-427b-aaef-c8de0b6c5141
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:464cd689…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:464cd689-9c58-47e9-a134-e3345763689c
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:fd3ff3ad…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:fd3ff3ad-be0e-4689-b75a-1cc4861fd80b
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:53939ae0…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:53939ae0-9612-4238-9cbf-244bb9a69b55
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:a720c5ed…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:a720c5ed-c1e5-4551-a7e1-9d762fc6d127
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:7e1dc3e2…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:7e1dc3e2-220c-4c02-9260-3b3f02f1fe77
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:9edb69d0…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:9edb69d0-9d5a-47b1-8887-bbd6bd326bf2
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:e89812d8…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:e89812d8-5c2f-4e34-90da-285dcfac8d67
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:e039c4e6…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:e039c4e6-e824-4b9f-a974-a24dc76129ad
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:4cf8dc7b…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:4cf8dc7b-f0de-4d2f-a11e-164f96ccc2a9
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:6b67c1cd…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:6b67c1cd-f05e-4ea7-80af-40023a094bb4
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:b03a637f…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:b03a637f-5b62-4141-b977-cdaa4d310e4f
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:24df8b2e…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:24df8b2e-f037-46a8-a57a-ebe917a6a182
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:8f3c8fa3…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:8f3c8fa3-baea-4f5d-9009-2b9796f18006
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:3ef59f94…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:3ef59f94-f5be-49a1-9f2f-6471d3a399d7
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:c22a8d0b…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:c22a8d0b-d0b4-4e86-82df-bb83627e08a5
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:072a3a8d…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:072a3a8d-2385-4cad-bbab-70afa949a56b
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:dc72d332…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:dc72d332-ef04-450f-af48-9c15dd16c5bc
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:b8ca9a1a…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:b8ca9a1a-6bdb-4754-bd46-08bef029fc93
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:bf0a301b…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:bf0a301b-d137-4b77-aefa-03f8a01f97d9
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:f37f90aa…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:f37f90aa-7ced-428c-9bbc-72a04d629d3e
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:17c851cd…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:17c851cd-cb2a-4abb-9fc8-fe133c9265ac
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:d4d1a15e…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:d4d1a15e-d25a-42c9-9749-bde32cb663e3
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:08d36dcc…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:08d36dcc-48b3-48cd-8627-bb2d505db3d2
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:ec8c48f3…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:ec8c48f3-ee8e-40ac-8c28-b921b6843847
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:3781cbf2…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:3781cbf2-bab4-4ecb-b2c4-fbbe9a8ef574
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:8c8d4e18…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:8c8d4e18-6f43-4e47-ae40-fbf3eae6d4a2
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:a97910bc…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:a97910bc-bdb0-4bbb-adde-165300d0a5bf
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:ea776844…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:ea776844-3943-4eb8-afa9-a57114de86a8
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:2bd57aba…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:2bd57aba-b148-46fc-8946-982b7bd46d53
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:4d3786ad…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:4d3786ad-8e14-4f4a-bd6c-c5fa75713375
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:f615997f…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:f615997f-1153-49b6-ae90-db84fca98d85
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
+  - id: doc:ec4edcda…
+    description: Lineage edge PRODUCES from pipeline::week3-document-refinery to table::doc:ec4edcda-0807-477f-bff8-e5bbc61779c4
+    fields_consumed:
+    - doc_id
+    - extracted_facts
+    - extraction_model
+    breaking_if_changed:
+    - extracted_facts.confidence
+    - doc_id
 profiling:
   structural_engine: pandas-fallback
   flat_row_count: 55

@@ -130,11 +130,99 @@ def _llm_annotations_stub(column: str, table: str, samples: list[Any], neighbors
     }
 
 
+def _llm_annotate_openai(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any] | None:
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    client = OpenAI(api_key=api_key)
+    prompt = (
+        f'Column "{column}" in dataset "{table}". Neighbor fields: {neighbors}. '
+        f"Sample values: {samples[:5]!r}. "
+        'Reply with ONLY compact JSON: {"description":"...","business_rule":"...","cross_column_relationship":"..."}'
+    )
+    try:
+        r = client.chat.completions.create(
+            model=os.environ.get("CONTRACT_LLM_MODEL", "gpt-4o-mini"),
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=400,
+        )
+        text = (r.choices[0].message.content or "").strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:].lstrip()
+        data = json.loads(text)
+        return {
+            "column": column,
+            "table": table,
+            "description": str(data.get("description", "")),
+            "business_rule": str(data.get("business_rule", "")),
+            "cross_column_relationship": str(data.get("cross_column_relationship", "")),
+            "samples": [str(s) for s in samples[:5]],
+            "provider": "openai",
+        }
+    except Exception:
+        return None
+
+
+def _llm_annotate_anthropic(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any] | None:
+    api_key = os.environ.get("ANTHROPIC_API_KEY")
+    if not api_key:
+        return None
+    try:
+        import anthropic
+    except Exception:
+        return None
+    client = anthropic.Anthropic(api_key=api_key)
+    prompt = (
+        f'Column "{column}" in dataset "{table}". Neighbor fields: {neighbors}. '
+        f"Sample values: {samples[:5]!r}. "
+        'Reply with ONLY compact JSON: {"description":"...","business_rule":"...","cross_column_relationship":"..."}'
+    )
+    try:
+        msg = client.messages.create(
+            model=os.environ.get("ANTHROPIC_CONTRACT_MODEL", "claude-3-5-haiku-20241022"),
+            max_tokens=400,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = ""
+        for b in msg.content:
+            if b.type == "text":
+                text += b.text
+        text = text.strip()
+        if text.startswith("```"):
+            parts = text.split("```")
+            text = parts[1] if len(parts) > 1 else text
+            if text.startswith("json"):
+                text = text[4:].lstrip()
+        data = json.loads(text)
+        return {
+            "column": column,
+            "table": table,
+            "description": str(data.get("description", "")),
+            "business_rule": str(data.get("business_rule", "")),
+            "cross_column_relationship": str(data.get("cross_column_relationship", "")),
+            "samples": [str(s) for s in samples[:5]],
+            "provider": "anthropic",
+        }
+    except Exception:
+        return None
+
+
 def _maybe_llm_annotate(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any]:
-    key = os.environ.get("ANTHROPIC_API_KEY") or os.environ.get("OPENAI_API_KEY")
-    if not key:
+    if os.environ.get("CONTRACT_LLM_OFF", "").strip() in ("1", "true", "yes"):
         return _llm_annotations_stub(column, table, samples, neighbors)
-    # Optional: real LLM call omitted to keep default runs offline; extend with your provider.
+    out = _llm_annotate_anthropic(column, table, samples, neighbors)
+    if out:
+        return out
+    out = _llm_annotate_openai(column, table, samples, neighbors)
+    if out:
+        return out
     return _llm_annotations_stub(column, table, samples, neighbors)
 
 

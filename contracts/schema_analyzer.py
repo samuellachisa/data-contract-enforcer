@@ -227,6 +227,32 @@ def main() -> None:
     args.output.write_text(json.dumps(out, indent=2), encoding="utf-8")
     print(f"Wrote schema evolution report to {args.output}")
 
+    ts = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+    mig_name = f"migration_impact_{args.contract_id}_{ts}.json"
+    mig_path = _REPO / "validation_reports" / mig_name
+    mig_payload = {
+        "contract_id": args.contract_id,
+        "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "human_readable_diff": json.dumps(diff, indent=2),
+        "compatibility_verdict": diff.get("compatibility_verdict"),
+        "migration_impact": impact,
+        "rollback_plan": impact.get("rollback_plan"),
+        "migration_checklist": impact.get("migration_checklist"),
+        "blast_radius_note": "See outputs/week4/lineage_snapshots.jsonl downstream consumers in generated contracts lineage sections.",
+        "per_consumer_failure_modes": [
+            {
+                "consumer": "week7-validation-runner",
+                "failure_mode": "Validation checks keyed on field types and required flags will ERROR or FAIL.",
+            },
+            {
+                "consumer": "week7-violation-attributor",
+                "failure_mode": "Blast radius may omit new nodes until lineage graph is regenerated.",
+            },
+        ],
+    }
+    mig_path.write_text(json.dumps(mig_payload, indent=2), encoding="utf-8")
+    print(f"Wrote migration impact report to {mig_path}")
+
 
 if __name__ == "__main__":
     main()

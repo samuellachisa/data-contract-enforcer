@@ -1,14 +1,22 @@
 {
-  "run_date": "2026-03-30",
+  "run_date": "2026-04-01",
   "prompt_hash": "9c79deee3277",
   "embedding_drift": {
     "drift_score": -0.0,
     "status": "PASS",
-    "threshold": 0.15
+    "threshold": 0.15,
+    "backend": "hashing",
+    "model": "HashingVectorizer-384"
   },
   "prompt_input_validation": {
     "quarantined_count": 0,
     "status": "PASS"
+  },
+  "langsmith_traces": {
+    "total_traces": 30,
+    "checks_failed": 0,
+    "status": "PASS",
+    "failed_check_ids": []
   },
   "total_outputs": 25,
   "schema_violations": 3,
@@ -16,5 +24,5 @@
   "trend": "rising",
   "baseline_violation_rate": 0.0,
   "status": "WARN",
-  "timestamp": "2026-03-30T20:52:26Z"
+  "timestamp": "2026-04-01T18:30:41Z"
 }

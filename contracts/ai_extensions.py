@@ -17,6 +17,7 @@ import argparse
 import hashlib
 import json
 import os
+import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -27,6 +28,8 @@ from jsonschema import validate
 from sklearn.feature_extraction.text import HashingVectorizer
 
 _REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
 
 
 def _now_iso() -> str:
@@ -63,8 +66,30 @@ def _embed_texts_hashing(texts: list[str], n_features: int = 384) -> np.ndarray:
         stop_words=None,
     )
     x = vec.transform(texts)
-    # Convert sparse matrix to dense for centroid math.
     return x.toarray().astype(np.float32)
+
+
+def _embed_texts_openai(texts: list[str], model: str = "text-embedding-3-small") -> np.ndarray | None:
+    api_key = os.environ.get("OPENAI_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+    client = OpenAI(api_key=api_key)
+    vecs: list[list[float]] = []
+    batch = 100
+    for i in range(0, len(texts), batch):
+        chunk = texts[i : i + batch]
+        resp = client.embeddings.create(model=model, input=chunk)
+        ordered = sorted(resp.data, key=lambda d: d.index)
+        vecs.extend([list(d.embedding) for d in ordered])
+    return np.array(vecs, dtype=np.float32)
+
+
+def _embedding_meta_path() -> Path:
+    return _REPO / "schema_snapshots" / "embedding_baseline_meta.json"
 
 
 def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 0.15) -> dict[str, Any]:
@@ -82,20 +107,81 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
     idx = rng.choice(len(texts), size=sample_n, replace=False)
     sample_texts = [texts[i] for i in idx]
 
+    backend = "openai" if os.environ.get("OPENAI_API_KEY") and os.environ.get("EMBEDDING_OFF", "") not in ("1", "true") else "hashing"
+    meta_path = _embedding_meta_path()
+    baseline_path = _REPO / "schema_snapshots" / "embedding_baselines.npz"
+
+    if backend == "openai":
+        emb = _embed_texts_openai(sample_texts)
+        if emb is None:
+            backend = "hashing"
+        else:
+            current = emb
+            current_centroid = np.mean(current, axis=0)
+            current_centroid = current_centroid / (np.linalg.norm(current_centroid) + 1e-9)
+
+            if baseline_path.exists() and meta_path.exists():
+                meta = json.loads(meta_path.read_text(encoding="utf-8"))
+                if meta.get("backend") != "openai":
+                    baseline_path.unlink(missing_ok=True)
+                    meta_path.unlink(missing_ok=True)
+
+            if not baseline_path.exists():
+                np.savez(baseline_path, centroid=current_centroid.astype(np.float64))
+                meta_path.write_text(json.dumps({"backend": "openai", "model": "text-embedding-3-small"}), encoding="utf-8")
+                return {
+                    "drift_score": 0.0,
+                    "status": "PASS",
+                    "threshold": threshold,
+                    "baseline_created": True,
+                    "backend": "openai",
+                    "model": "text-embedding-3-small",
+                }
+
+            base = np.load(baseline_path)
+            baseline_centroid = base["centroid"].astype(np.float64)
+            baseline_centroid = baseline_centroid / (np.linalg.norm(baseline_centroid) + 1e-9)
+            c64 = current_centroid.astype(np.float64)
+            cosine_sim = float(np.dot(c64, baseline_centroid))
+            drift = 1.0 - cosine_sim
+            drift = round(float(drift), 4)
+            status = "FAIL" if drift > threshold else "PASS"
+            return {
+                "drift_score": drift,
+                "status": status,
+                "threshold": threshold,
+                "backend": "openai",
+                "model": "text-embedding-3-small",
+            }
+
+    # HashingVectorizer fallback (offline, deterministic)
     current = _embed_texts_hashing(sample_texts)
     current_centroid = np.mean(current, axis=0)
     current_centroid = current_centroid / (np.linalg.norm(current_centroid) + 1e-9)
 
-    baseline_path = _REPO / "schema_snapshots" / "embedding_baselines.npz"
+    if baseline_path.exists() and meta_path.exists():
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        if meta.get("backend") != "hashing":
+            baseline_path.unlink(missing_ok=True)
+            meta_path.unlink(missing_ok=True)
+
     if not baseline_path.exists():
-        np.savez(baseline_path, centroid=current_centroid)
-        return {"drift_score": 0.0, "status": "PASS", "threshold": threshold, "baseline_created": True}
+        np.savez(baseline_path, centroid=current_centroid.astype(np.float64))
+        meta_path.write_text(json.dumps({"backend": "hashing", "model": "HashingVectorizer-384"}), encoding="utf-8")
+        return {
+            "drift_score": 0.0,
+            "status": "PASS",
+            "threshold": threshold,
+            "baseline_created": True,
+            "backend": "hashing",
+            "model": "HashingVectorizer-384",
+        }
 
     base = np.load(baseline_path)
-    baseline_centroid = base["centroid"]
+    baseline_centroid = base["centroid"].astype(np.float64)
     baseline_centroid = baseline_centroid / (np.linalg.norm(baseline_centroid) + 1e-9)
-
-    cosine_sim = float(np.dot(current_centroid, baseline_centroid))
+    c64 = current_centroid.astype(np.float64)
+    cosine_sim = float(np.dot(c64, baseline_centroid))
     drift = 1.0 - cosine_sim
     drift = round(float(drift), 4)
     status = "FAIL" if drift > threshold else "PASS"
@@ -103,6 +189,8 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
         "drift_score": drift,
         "status": status,
         "threshold": threshold,
+        "backend": "hashing",
+        "model": "HashingVectorizer-384",
     }
 
 
@@ -244,6 +332,9 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
                 "message": f"Week 2 verdict record failed structured output schema validation: {f.get('error')}",
                 "source_contract_id": "week2-digital-courtroom-verdicts",
                 "verdict_id": f.get("verdict_id"),
+                "records_failing": 1,
+                "severity": "CRITICAL",
+                "blame_hint": {"file": "src/week3/extractor.py", "line_start": 1, "line_end": 40},
             },
         )
 
@@ -258,6 +349,35 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
     }
 
 
+def check_langsmith_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
+    """LangSmith trace_record contract (Phase 4); mirrors runner checks and logs FAIL rows."""
+    from contracts.validation_checks import validate_langsmith_runs
+
+    contract = {"id": "langsmith-trace-runs"}
+    checks = validate_langsmith_runs(traces, contract, _REPO)
+    fail_rows = [c for c in checks if c.status == "FAIL"]
+    for c in fail_rows[:30]:
+        _append_violation(
+            _REPO / "violation_log" / "violations.jsonl",
+            {
+                "violation_id": str(uuid.uuid4()),
+                "type": "langsmith_trace_schema",
+                "check_id": c.check_id,
+                "detected_at": _now_iso(),
+                "severity": c.severity,
+                "message": c.message,
+                "source_contract_id": "langsmith-trace-runs",
+                "records_failing": c.records_failing,
+            },
+        )
+    return {
+        "total_traces": len(traces),
+        "checks_failed": len(fail_rows),
+        "status": "FAIL" if fail_rows else "PASS",
+        "failed_check_ids": [c.check_id for c in fail_rows[:10]],
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI Contract Extensions (Week 7)")
     args = parser.parse_args()
@@ -265,21 +385,25 @@ def main() -> None:
 
     extractions_path = _REPO / "outputs" / "week3" / "extractions.jsonl"
     verdicts_path = _REPO / "outputs" / "week2" / "verdicts.jsonl"
+    traces_path = _REPO / "outputs" / "traces" / "runs.jsonl"
 
     extractions = _load_jsonl(extractions_path)
     verdicts = _load_jsonl(verdicts_path)
+    traces = _load_jsonl(traces_path) if traces_path.exists() else []
 
     _write_prompt_input_schema_file()
 
     embedding = check_embedding_drift(extractions)
     prompt = check_prompt_input_schema(extractions)
     llm = validate_llm_output_schema(verdicts)
+    traces_report = check_langsmith_traces(traces)
 
     metrics = {
         "run_date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "prompt_hash": hashlib.sha256(b"week3-prompt-input-schema-v1").hexdigest()[:12],
         "embedding_drift": embedding,
         "prompt_input_validation": prompt,
+        "langsmith_traces": traces_report,
         "total_outputs": llm["total_outputs"],
         "schema_violations": llm["schema_violations"],
         "violation_rate": llm["violation_rate"],

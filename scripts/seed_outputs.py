@@ -142,7 +142,7 @@ def main() -> None:
         )
     _write_jsonl(OUT / "week3" / "extractions.jsonl", extractions)
 
-    # Week 4 — lineage linking extractor -> cartographer
+    # Week 4 — lineage linking extractor -> cartographer + one TABLE node per doc (cross-contract Week3→Week4)
     snap_nodes = [
         {
             "node_id": "file::src/week3/extractor.py",
@@ -199,6 +199,37 @@ def main() -> None:
             "confidence": 0.92,
         },
     ]
+    for ex in extractions:
+        did = str(ex["doc_id"])
+        nfacts = len(ex.get("extracted_facts") or [])
+        snap_nodes.append(
+            {
+                "node_id": f"table::doc:{did}",
+                "type": "TABLE",
+                "label": f"doc:{did[:8]}…",
+                "metadata": {
+                    "path": did,
+                    "purpose": f"Extracted document with {nfacts} fact(s) from Week 3 refinery",
+                    "last_modified": ex.get("extracted_at", iso_z(base)),
+                },
+            }
+        )
+        snap_edges.append(
+            {
+                "source": "pipeline::week3-document-refinery",
+                "target": f"table::doc:{did}",
+                "relationship": "PRODUCES",
+                "confidence": 0.88,
+            }
+        )
+        snap_edges.append(
+            {
+                "source": f"table::doc:{did}",
+                "target": "file::src/week4/cartographer.py",
+                "relationship": "CONSUMES",
+                "confidence": 0.85,
+            }
+        )
     lineage_snapshot = {
         "snapshot_id": str(uuid.uuid4()),
         "codebase_root": str(ROOT.resolve()).replace("\\", "/"),

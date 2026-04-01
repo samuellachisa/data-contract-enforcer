@@ -1,0 +1,109 @@
+{
+  "report_id": "ffcc6570-b2c3-4bbe-8ccb-3f83b82a233c",
+  "contract_id": "week1-intent-code-correlator-intent-records",
+  "snapshot_id": "4ea2a6aade6735eebf575329cab108ba32baa13101fb8527d58a82fc7731f277",
+  "run_timestamp": "2026-04-01T18:29:55Z",
+  "total_checks": 8,
+  "passed": 8,
+  "failed": 0,
+  "warned": 0,
+  "errored": 0,
+  "results": [
+    {
+      "check_id": "week1.intent_id.required",
+      "column_name": "intent_id",
+      "check_type": "required",
+      "status": "PASS",
+      "actual_value": "missing=0",
+      "expected": "non-null",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "intent_id required."
+    },
+    {
+      "check_id": "week1.intent_id.uuid",
+      "column_name": "intent_id",
+      "check_type": "format",
+      "status": "PASS",
+      "actual_value": "count=0",
+      "expected": "uuid v4",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "intent_id must be UUID v4 pattern."
+    },
+    {
+      "check_id": "week1.code_refs.non_empty",
+      "column_name": "code_refs",
+      "check_type": "array",
+      "status": "PASS",
+      "actual_value": "empty=0",
+      "expected": "minItems>=1",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "code_refs must be non-empty per intent_record."
+    },
+    {
+      "check_id": "week1.code_refs.confidence.range",
+      "column_name": "code_refs[*].confidence",
+      "check_type": "range",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "0.0\u20131.0",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "code_refs.confidence must be float 0.0\u20131.0."
+    },
+    {
+      "check_id": "week1.code_refs.line_order",
+      "column_name": "code_refs[*].line_end",
+      "check_type": "range",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "line_end >= line_start",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "line_end must be >= line_start."
+    },
+    {
+      "check_id": "week1.code_refs.file.exists",
+      "column_name": "code_refs[*].file",
+      "check_type": "file_exists",
+      "status": "PASS",
+      "actual_value": "missing=0",
+      "expected": "path exists under repo root",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Each code_refs.file must exist relative to repository root."
+    },
+    {
+      "check_id": "week1.created_at.iso8601",
+      "column_name": "created_at",
+      "check_type": "format",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "ISO 8601",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "created_at must be ISO 8601."
+    },
+    {
+      "check_id": "week1.code_refs.confidence.drift_baseline",
+      "column_name": "code_refs[*].confidence",
+      "check_type": "drift",
+      "status": "PASS",
+      "actual_value": "baseline_established mean=0.7625",
+      "expected": "first-run baseline",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Established statistical baseline for code_refs.confidence.mean."
+    }
+  ]
+}

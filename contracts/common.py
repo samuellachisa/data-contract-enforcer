@@ -3,10 +3,42 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import yaml
+
+
+@dataclass
+class CheckResult:
+    check_id: str
+    column_name: str
+    check_type: str
+    status: str
+    actual_value: str
+    expected: str
+    severity: str
+    records_failing: int
+    sample_failing: list[str]
+    message: str
+
+
+def baselines_path(root: Path) -> Path:
+    return root / "schema_snapshots" / "baselines.json"
+
+
+def load_baselines(root: Path) -> dict[str, Any]:
+    p = baselines_path(root)
+    if not p.exists():
+        return {}
+    return json.loads(p.read_text(encoding="utf-8"))
+
+
+def save_baselines(root: Path, data: dict[str, Any]) -> None:
+    p = baselines_path(root)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(json.dumps(data, indent=2), encoding="utf-8")
 
 
 def repo_root() -> Path:

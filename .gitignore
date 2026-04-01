@@ -6,3 +6,4 @@ venv/
 *.npz
 .DS_Store
 outputs/quarantine/
+outputs/_cross_validation_manifest.jsonl

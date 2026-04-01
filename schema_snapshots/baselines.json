@@ -2,5 +2,21 @@
   "week3-document-refinery-extractions::extracted_facts.confidence.mean": {
     "mean": 0.7238181818181818,
     "std": 0.14283481761799866
+  },
+  "week3-document-refinery-extractions::processing_time_ms.mean": {
+    "mean": 2878.509090909091,
+    "std": 1270.4227910814468
+  },
+  "week5-event-sourcing-events::payload.bytes.mean": {
+    "mean": 60029.490909090906,
+    "std": 29215.75241597819
+  },
+  "week1-intent-code-correlator-intent-records::code_refs.confidence.mean": {
+    "mean": 0.7625,
+    "std": 0.10425329730996521
+  },
+  "week2-digital-courtroom-verdicts::confidence.mean": {
+    "mean": 0.7991999999999999,
+    "std": 0.09661966673509075
   }
 }

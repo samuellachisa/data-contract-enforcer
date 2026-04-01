@@ -1,6 +1,6 @@
 {
-  "report_generated_at": "2026-03-30T20:51:54Z",
-  "data_health_score": 38.57,
+  "report_generated_at": "2026-04-01T18:30:58Z",
+  "data_health_score": 41.25,
   "n_critical_contract_violations": 2,
   "data_health_narrative": "Overall health is reduced by high-severity contract violations. Fix CRITICAL fields to prevent silent corruption downstream.",
   "violations_this_week": [

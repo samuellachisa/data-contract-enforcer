@@ -1,0 +1,73 @@
+{
+  "report_id": "da66f607-74da-4b56-a538-54031beda8c6",
+  "contract_id": "langsmith-trace-runs",
+  "snapshot_id": "dac96060bd6ed900c862a8cea0d412adc3746d457f57ca2385de5cbdca79d12b",
+  "run_timestamp": "2026-04-01T18:29:57Z",
+  "total_checks": 5,
+  "passed": 5,
+  "failed": 0,
+  "warned": 0,
+  "errored": 0,
+  "results": [
+    {
+      "check_id": "langsmith.id.uuid",
+      "column_name": "id",
+      "check_type": "format",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "uuid",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Trace id must be UUID v4 pattern."
+    },
+    {
+      "check_id": "langsmith.run_type.enum",
+      "column_name": "run_type",
+      "check_type": "enum",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "{'tool', 'llm', 'chain', 'retriever', 'embedding'}",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "run_type must be llm|chain|tool|retriever|embedding."
+    },
+    {
+      "check_id": "langsmith.end_time.after_start",
+      "column_name": "end_time",
+      "check_type": "temporal",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "end_time > start_time",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "end_time must be strictly after start_time."
+    },
+    {
+      "check_id": "langsmith.total_tokens.sum",
+      "column_name": "total_tokens",
+      "check_type": "identity",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "total_tokens = prompt_tokens + completion_tokens",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "Token identity check."
+    },
+    {
+      "check_id": "langsmith.total_cost.non_negative",
+      "column_name": "total_cost",
+      "check_type": "range",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": ">= 0",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "total_cost must be numeric and >= 0."
+    }
+  ]
+}

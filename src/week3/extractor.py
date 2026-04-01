@@ -1,5 +1,5 @@
-"""Document extraction pipeline (stub for lineage attribution)."""
+"""Stub extractor for Week 7 lineage / blame attribution (seed lineage references this file)."""
 
 
-def run_extraction(doc_path: str) -> dict:
-    return {"doc_path": doc_path, "status": "ok"}
+def extract_document(_path: str) -> dict:
+    return {"facts": [], "entities": []}

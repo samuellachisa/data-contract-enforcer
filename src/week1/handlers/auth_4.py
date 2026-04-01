@@ -1,2 +1,5 @@
-def validate_session_1():
+"""Stub handler for Week 7 contract file-existence checks."""
+
+
+def validate_session_1() -> bool:
     return True
