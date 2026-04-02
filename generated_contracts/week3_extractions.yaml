@@ -173,32 +173,32 @@ profiling:
   flat_row_count: 55
   confidence_numeric_profile:
     min: 0.5
-    max: 51.3
-    mean: 1.6414545454545453
+    max: 0.97
+    mean: 0.7238181818181818
     p25: 0.61
     p50: 0.71
-    p75: 0.88
-    p95: 0.953
-    p99: 24.12180000000004
-    stddev: 6.759173811315272
+    p75: 0.87
+    p95: 0.95
+    p99: 0.9646
+    stddev: 0.14283481761799866
   processing_time_ms_stats:
     min: 258.0
     max: 4944.0
-    mean: 2878.509090909091
+    mean: 2861.0363636363636
     p25: 2234.0
     p50: 3064.0
     p75: 3794.5
     p95: 4817.4
     p99: 4907.82
-    stddev: 1270.4227910814468
+    stddev: 1292.6232237886204
 llm_annotations:
   column: extracted_facts.confidence
   table: extractions
   description: 'Column `extracted_facts.confidence` in `extractions`; neighbors: [''doc_id'', ''source_hash'', ''extraction_model''].
     Treat as contract-critical: downstream validators and drift checks depend on stable semantics.'
   business_rule: 'Keep `extracted_facts.confidence` distribution consistent with baseline (detect >2σ drift as WARN, >3σ as
-    FAIL). Breaking changes require migration impact report. Observed profile on this snapshot: min=0.5, max=51.3, mean=1.6414545454545453,
-    p95=0.953.'
+    FAIL). Breaking changes require migration impact report. Observed profile on this snapshot: min=0.5, max=0.97, mean=0.7238181818181818,
+    p95=0.95.'
   cross_column_relationship: Join keys and consumer fields are listed under `lineage.downstream` in the data contract.
   samples:
   - '0.71'
@@ -208,7 +208,7 @@ llm_annotations:
   - '0.53'
   statistical_context:
     min: 0.5
-    max: 51.3
-    mean: 1.6414545454545453
-    p95: 0.953
-    stddev: 6.759173811315272
+    max: 0.97
+    mean: 0.7238181818181818
+    p95: 0.95
+    stddev: 0.14283481761799866

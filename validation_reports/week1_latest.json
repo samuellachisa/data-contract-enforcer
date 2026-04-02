@@ -1,10 +1,10 @@
 {
-  "report_id": "ffcc6570-b2c3-4bbe-8ccb-3f83b82a233c",
+  "report_id": "064a0029-0e24-4fcc-b8be-8d6fa9670563",
   "contract_id": "week1-intent-code-correlator-intent-records",
-  "snapshot_id": "4ea2a6aade6735eebf575329cab108ba32baa13101fb8527d58a82fc7731f277",
-  "run_timestamp": "2026-04-01T18:29:55Z",
-  "total_checks": 8,
-  "passed": 8,
+  "snapshot_id": "740df2d2779dff97d8465b130c90f599daed10502953d76aeaef26b389ddc870",
+  "run_timestamp": "2026-04-01T20:06:57Z",
+  "total_checks": 9,
+  "passed": 9,
   "failed": 0,
   "warned": 0,
   "errored": 0,
@@ -82,6 +82,18 @@
       "message": "Each code_refs.file must exist relative to repository root."
     },
     {
+      "check_id": "week1.governance_tags.non_empty",
+      "column_name": "governance_tags",
+      "check_type": "array",
+      "status": "PASS",
+      "actual_value": "invalid=0",
+      "expected": "minItems>=1",
+      "severity": "LOW",
+      "records_failing": 0,
+      "sample_failing": [],
+      "message": "governance_tags must be a non-empty array of strings."
+    },
+    {
       "check_id": "week1.created_at.iso8601",
       "column_name": "created_at",
       "check_type": "format",
@@ -94,16 +106,16 @@
       "message": "created_at must be ISO 8601."
     },
     {
-      "check_id": "week1.code_refs.confidence.drift_baseline",
+      "check_id": "week1.code_refs.confidence.statistical_drift",
       "column_name": "code_refs[*].confidence",
       "check_type": "drift",
       "status": "PASS",
-      "actual_value": "baseline_established mean=0.7625",
-      "expected": "first-run baseline",
+      "actual_value": "current_mean=0.7625, baseline_mean=0.7625, dev_sigma=0.00",
+      "expected": "WARN if >2\u03c3, FAIL if >3\u03c3",
       "severity": "LOW",
       "records_failing": 0,
       "sample_failing": [],
-      "message": "Established statistical baseline for code_refs.confidence.mean."
+      "message": "Statistical drift vs first-run baseline."
     }
   ]
 }

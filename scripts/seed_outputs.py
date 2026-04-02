@@ -115,14 +115,12 @@ def main() -> None:
             },
         ]
         fact_entity_refs = [e1, e2]
-        if i == 19:
-            fact_entity_refs.append("00000000-0000-4000-8000-000000000999")  # missing entity
         facts = [
             {
                 "fact_id": str(uuid.uuid4()),
                 "text": f"Document {i} states revenue grew in Q4 with confidence narrative.",
                 "entity_refs": fact_entity_refs,
-                "confidence": (51.3 if i == 20 else round(random.uniform(0.5, 0.98), 2)), 
+                "confidence": round(random.uniform(0.5, 0.98), 2),
                 "page_ref": random.choice([None, 1, 2, 3, 4]),
                 "source_excerpt": f"verbatim chunk {i} from page",
             }

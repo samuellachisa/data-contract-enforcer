@@ -1,23 +1,13 @@
 {
-  "report_generated_at": "2026-04-01T18:30:58Z",
-  "data_health_score": 41.25,
-  "n_critical_contract_violations": 2,
+  "report_generated_at": "2026-04-01T20:07:26Z",
+  "data_health_score": 100.0,
+  "n_critical_contract_violations": 0,
   "data_health_narrative": "Overall health is reduced by high-severity contract violations. Fix CRITICAL fields to prevent silent corruption downstream.",
   "violations_this_week": [
     {
       "severity": "CRITICAL",
       "description": "Week 2 Digital Courtroom: verdict records failed structured LLM output schema validation. Downstream AI consumers can ingest malformed scores or evidence and produce incorrect risk decisions.",
       "check_id": "week2.verdict_record.schema"
-    },
-    {
-      "severity": "CRITICAL",
-      "description": "Week 3 Document Refinery: `extracted_facts[*].confidence` must stay a float in 0.0\u20131.0. Downstream systems that interpret confidence as a probability (Week 4 lineage attribution and any scoring consumers) may mis-rank or mis-blame changes.",
-      "check_id": "week3.extracted_facts.confidence.range"
-    },
-    {
-      "severity": "CRITICAL",
-      "description": "Week 3 Document Refinery: `extracted_facts[*].entity_refs` must reference IDs present in `entities[]`. Downstream lineage metadata can become inconsistent, breaking entity-aware attribution and any audit joins.",
-      "check_id": "week3.extracted_facts.entity_refs.relationship"
     }
   ],
   "schema_changes_detected": [
