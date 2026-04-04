@@ -26,7 +26,7 @@ def test_validate_generic_missing_column_detects_absent_key() -> None:
     }
     rows = [{"optional_field": "x"}]
     out = validate_generic_missing_column(contract, rows)
-    assert any(r.check_id == "runner.schema.required.doc_id" and r.status == "FAIL" for r in out)
+    assert any(r.check_id == "runner.schema.required.doc_id" and r.status == "ERROR" for r in out)
 
 
 def test_validate_generic_missing_column_pass_when_present() -> None:
@@ -173,6 +173,16 @@ def test_pipeline_should_block_ignores_warn_status() -> None:
 def test_pipeline_should_block_fail_non_critical_not_warn_mode() -> None:
     report = {"results": [{"status": "FAIL", "severity": "MEDIUM", "check_id": "x"}]}
     assert pipeline_should_block(report, "WARN") is False
+
+
+def test_pipeline_should_block_ignores_error_even_if_critical_severity() -> None:
+    report = {
+        "results": [
+            {"status": "ERROR", "severity": "CRITICAL", "check_id": "runner.schema.required.doc_id"},
+        ]
+    }
+    assert pipeline_should_block(report, "WARN") is False
+    assert pipeline_should_block(report, "ENFORCE") is False
 
 
 def test_pipeline_should_block_ignores_non_dict_result_rows() -> None:

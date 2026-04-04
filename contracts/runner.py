@@ -1,6 +1,12 @@
 #!/usr/bin/env python3
 """
 ValidationRunner: executes contract clauses against JSONL; emits structured JSON report.
+
+Status semantics:
+- ERROR — structural / data-availability (missing required field, ingest errors, missing artifacts).
+  All checks still run; WARN/ENFORCE exit policy keys off FAIL only.
+- FAIL — semantic contract violations (ranges, enums, drift thresholds, referential rules).
+
 Usage: python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions.jsonl
 """
 from __future__ import annotations
@@ -89,13 +95,13 @@ def validate_week3_extractions(rows: list[dict], contract: dict[str, Any], root:
             "week3.doc_id.required",
             "doc_id",
             "required",
-            "FAIL",
+            "ERROR",
             f"missing={missing_doc}",
             "non-null string",
             "CRITICAL",
             missing_doc,
             [],
-            "doc_id is required.",
+            "doc_id is required (missing key or null counts as data availability, not semantic range/enum).",
         )
     else:
         bad_uuid = [r.get("doc_id") for r in rows if not UUID_RE.match(str(r.get("doc_id", "")))]
@@ -160,6 +166,8 @@ def validate_week3_extractions(rows: list[dict], contract: dict[str, Any], root:
         "extracted_facts must be non-empty.",
     )
 
+    # Per-fact [0,1] range (FAIL) vs batch mean drift vs baselines.json (FAIL/WARN) are independent clauses;
+    # see README "Week 3 confidence: range vs statistical drift".
     conf_fail_ids: list[str] = []
     conf_values: list[float] = []
     for r in rows:
@@ -479,7 +487,7 @@ def _ingest_check_results(issues: list[dict[str, Any]]) -> list[CheckResult]:
 def validate_generic_missing_column(
     contract: dict[str, Any], rows: list[dict[str, Any]], *, sample_size: int = 200
 ) -> list[CheckResult]:
-    """Top-level required fields from contract schema: FAIL if any sampled row is missing the key or value is None."""
+    """Top-level required fields from contract schema: ERROR (not FAIL) if key missing or value is null."""
     out: list[CheckResult] = []
     schema = contract.get("schema")
     if not isinstance(schema, dict):
@@ -496,7 +504,7 @@ def validate_generic_missing_column(
                 pk = r.get("doc_id") or r.get("event_id") or r.get("verdict_id") or r.get("node_id")
                 if pk is not None and len(samples) < 5:
                     samples.append(str(pk))
-        st = "FAIL" if missing else "PASS"
+        st = "ERROR" if missing else "PASS"
         out.append(
             CheckResult(
                 check_id=f"runner.schema.required.{field_name}",
@@ -508,7 +516,10 @@ def validate_generic_missing_column(
                 severity="CRITICAL" if missing else "LOW",
                 records_failing=missing,
                 sample_failing=samples,
-                message=f"Contract schema marks `{field_name}` required; {missing} sampled row(s) lack a non-null value.",
+                message=(
+                    f"Contract schema marks `{field_name}` required; {missing} sampled row(s) lack a non-null value "
+                    "(availability/structure → ERROR; semantic clause failures remain FAIL)."
+                ),
             )
         )
     return out
@@ -596,6 +607,8 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
 def pipeline_should_block(report: dict[str, Any], mode: str) -> bool:
     """
     AUDIT: never block. WARN: block on FAIL+CRITICAL. ENFORCE: block on FAIL+(CRITICAL|HIGH).
+
+    ERROR rows (missing columns, ingest, tooling) do not affect exit code; the run still emits a full report.
     """
     m = (mode or "AUDIT").strip().upper()
     if m == "AUDIT":
@@ -622,7 +635,7 @@ def main() -> None:
         "--mode",
         choices=["AUDIT", "WARN", "ENFORCE"],
         default="AUDIT",
-        help="AUDIT: always exit 0. WARN: exit 1 if any FAIL with CRITICAL. ENFORCE: exit 1 if FAIL with CRITICAL or HIGH.",
+        help="AUDIT: always exit 0. WARN/ENFORCE: exit 1 only on FAIL (semantic), not on ERROR (missing required field, ingest, etc.).",
     )
     parser.add_argument(
         "--cross-dependencies",

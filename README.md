@@ -11,6 +11,8 @@ A **data contract enforcement layer** for a multi-week analytics and AI pipeline
 - [Prerequisites](#prerequisites)
 - [Quick start](#quick-start)
 - [Validation modes](#validation-modes)
+  - [Check statuses (ERROR vs FAIL)](#check-statuses-error-vs-fail)
+  - [Week 3 confidence: range vs statistical drift](#week-3-confidence-range-vs-statistical-drift)
 - [Repository layout](#repository-layout)
 - [Contract registry](#contract-registry)
 - [Full pipeline (practitioner checklist)](#full-pipeline-practitioner-checklist)
@@ -206,6 +208,25 @@ Artifacts: `validation_reports/*.json`, `validation_reports/ai_metrics.json`, `e
 | **AUDIT** | Run all checks; always exit **0**. |
 | **WARN** | Exit **1** if any result has `status=FAIL` and `severity=CRITICAL`. |
 | **ENFORCE** | Exit **1** if any `FAIL` has severity **CRITICAL** or **HIGH**. |
+
+`ERROR` results (missing required columns, JSONL ingest problems, missing generated schemas, malformed baselines) are **never** the reason for exit **1**: the runner still executes every check and writes a full report.
+
+### Check statuses (ERROR vs FAIL)
+
+| Status | Meaning | Examples |
+|--------|---------|----------|
+| **ERROR** | Structural or operational: data not present where the contract expects it, or tooling/config is incomplete. | `runner.schema.required.*` (missing/null top-level field from Bitol `schema.required`), `week3.doc_id.required`, `week1.intent_id.required`, JSONL line parse errors, missing `DocumentProcessed.json` payload schema, bad baseline entry shape in `baselines.json`. |
+| **FAIL** | Semantic: values are present but violate the clause. | `week3.extracted_facts.confidence.range` (numeric confidence outside 0.0–1.0), `week3.extracted_facts.confidence.statistical_drift` (mean moved beyond σ thresholds vs `baselines.json`), enums, referential integrity, cross-field rules. |
+
+### Week 3 confidence: range vs statistical drift
+
+These are **independent checks** with separate `check_id`s in the validation report:
+
+1. **`week3.extracted_facts.confidence.range`** — For each fact, if `confidence` is numeric, it must lie in **[0.0, 1.0]** (non-numeric types also fail this clause). This is a **per-value** contract; it does not read `baselines.json`.
+
+2. **`week3.extracted_facts.confidence.statistical_drift`** — Collects **all numeric** `confidence` values from facts (including numbers that are already out of range), computes the **batch mean**, and compares it to the stored mean/std for `week3-document-refinery-extractions::extracted_facts.confidence.mean` in **`schema_snapshots/baselines.json`**. WARN if deviation > 2σ, FAIL if > 3σ (see `_apply_numeric_mean_drift` in `contracts/validation_checks.py`).
+
+Because both clauses run on the same run, a **scale change** (for example 0–1 probability vs 0–100 percentage) typically triggers **`range` FAIL** on many facts. The **mean** of those same numbers also shifts, so **`statistical_drift`** can WARN/FAIL in the same report. Either clause can surface issues alone if the other happens to pass (for example, values still in [0, 1] but the batch mean moved vs baseline).
 
 ---
 

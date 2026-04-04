@@ -36,6 +36,10 @@ def test_pipeline_should_block_modes() -> None:
     assert pipeline_should_block(report_high, "WARN") is False
     assert pipeline_should_block(report_high, "ENFORCE") is True
 
+    report_err = {"results": [{"status": "ERROR", "severity": "CRITICAL", "check_id": "runner.schema.required.x"}]}
+    assert pipeline_should_block(report_err, "WARN") is False
+    assert pipeline_should_block(report_err, "ENFORCE") is False
+
 
 def test_week3_validation_report_schema() -> None:
     from contracts.runner import run_validation

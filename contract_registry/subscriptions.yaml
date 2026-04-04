@@ -14,9 +14,9 @@ subscriptions:
     fields_consumed: [doc_id, extracted_facts, extraction_model]
     breaking_fields: &week3_runner_clauses
       - field: runner.schema.required
-        reason: ValidationRunner validate_generic_missing_column for Bitol schema.required top-level fields
+        reason: ValidationRunner validate_generic_missing_column (status ERROR when required top-level fields missing/null)
       - field: doc_id.required
-        reason: clause week3.doc_id.required
+        reason: clause week3.doc_id.required (status ERROR when doc_id absent)
       - field: doc_id.uuid
         reason: clause week3.doc_id.uuid
       - field: doc_id.unique
@@ -66,7 +66,7 @@ subscriptions:
     fields_consumed: [nodes, edges, git_commit]
     breaking_fields: &week4_runner_clauses
       - field: runner.schema.required
-        reason: ValidationRunner validate_generic_missing_column for lineage contract schema
+        reason: ValidationRunner validate_generic_missing_column (status ERROR when required top-level fields missing/null)
       - field: snapshot.non_empty
         reason: clause week4.snapshot.non_empty
       - field: snapshot_id.uuid
@@ -104,7 +104,7 @@ subscriptions:
     fields_consumed: [payload, event_type, metadata, sequence_number, occurred_at, recorded_at]
     breaking_fields: &week5_runner_clauses
       - field: runner.schema.required
-        reason: ValidationRunner validate_generic_missing_column for event contract schema
+        reason: ValidationRunner validate_generic_missing_column (status ERROR when required top-level fields missing/null)
       - field: event_type.pascal
         reason: clause week5.event_type.pascal
       - field: sequence_number.monotonic
@@ -138,7 +138,7 @@ subscriptions:
     fields_consumed: [total_tokens, prompt_tokens, completion_tokens, run_type, start_time, end_time]
     breaking_fields: &langsmith_runner_clauses
       - field: runner.schema.required
-        reason: ValidationRunner validate_generic_missing_column for trace contract schema
+        reason: ValidationRunner validate_generic_missing_column (status ERROR when required top-level fields missing/null)
       - field: id.uuid
         reason: clause langsmith.id.uuid
       - field: run_type.enum
@@ -170,9 +170,9 @@ subscriptions:
     fields_consumed: [intent_id, code_refs, governance_tags, created_at, description]
     breaking_fields: &week1_runner_clauses
       - field: runner.schema.required
-        reason: ValidationRunner validate_generic_missing_column for intent contract schema
+        reason: ValidationRunner validate_generic_missing_column (status ERROR when required top-level fields missing/null)
       - field: intent_id.required
-        reason: clause week1.intent_id.required
+        reason: clause week1.intent_id.required (status ERROR when intent_id absent)
       - field: intent_id.uuid
         reason: clause week1.intent_id.uuid
       - field: code_refs.non_empty
@@ -202,7 +202,7 @@ subscriptions:
     fields_consumed: [verdict_id, target_ref, scores, overall_verdict, overall_score, confidence, rubric_id, rubric_version]
     breaking_fields: &week2_runner_clauses
       - field: runner.schema.required
-        reason: ValidationRunner validate_generic_missing_column for verdict contract schema
+        reason: ValidationRunner validate_generic_missing_column (status ERROR when required top-level fields missing/null)
       - field: overall_verdict.enum
         reason: clause week2.overall_verdict.enum
       - field: scores.criterion.range

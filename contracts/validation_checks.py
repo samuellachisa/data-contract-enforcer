@@ -143,13 +143,13 @@ def validate_week1_intents(rows: list[dict], contract: dict[str, Any], root: Pat
         "week1.intent_id.required",
         "intent_id",
         "required",
-        "FAIL" if missing else "PASS",
+        "ERROR" if missing else "PASS",
         f"missing={missing}",
         "non-null",
         "CRITICAL" if missing else "LOW",
         missing,
         [],
-        "intent_id required.",
+        "intent_id required (missing → ERROR; type/format violations on present values remain FAIL).",
     )
     bad_uuid = [r.get("intent_id") for r in rows if r.get("intent_id") and not UUID_RE.match(str(r.get("intent_id")))]
     add(
