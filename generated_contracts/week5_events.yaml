@@ -93,8 +93,8 @@ quality:
 lineage:
   upstream: []
   downstream:
-  - id: week7-contract-enforcer
-    description: Week 7 validates event payloads and ordering
+  - id: week6-synthesis-consumer
+    description: Week 6 / contract enforcer validates event payloads and ordering
     fields_consumed:
     - event_type
     - payload
@@ -103,6 +103,9 @@ lineage:
     breaking_if_changed:
     - payload
     - event_type
+  registry_note: Blast radius uses registry_subscribers as primary source; downstream is lineage enrichment only.
+  registry_subscribers:
+  - week6-synthesis-consumer
 profiling:
   ingest:
     jsonl_lines_accepted: 55

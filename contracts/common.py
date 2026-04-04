@@ -10,6 +10,26 @@ from typing import Any
 import yaml
 
 
+def load_repo_dotenv() -> None:
+    """
+    Load environment variables from the repository root.
+
+    Order:
+    1. `.env` — shared defaults (not committed; use `.env.example` as a template).
+    2. `.env.local` — machine-specific overrides (optional; also gitignored).
+
+    Existing OS environment variables are not overwritten by `.env`.
+    Keys present only in `.env.local` override both OS and `.env`.
+    """
+    root = Path(__file__).resolve().parents[1]
+    try:
+        from dotenv import load_dotenv
+    except ImportError:
+        return
+    load_dotenv(root / ".env", override=False)
+    load_dotenv(root / ".env.local", override=True)
+
+
 @dataclass
 class CheckResult:
     check_id: str
@@ -119,3 +139,7 @@ def iso_now() -> str:
     from datetime import datetime, timezone
 
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+# So OPENAI_API_KEY / ANTHROPIC_API_KEY / flags work when set in `.env`.
+load_repo_dotenv()

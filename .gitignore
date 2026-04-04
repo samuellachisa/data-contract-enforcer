@@ -3,6 +3,7 @@ __pycache__/
 .venv/
 venv/
 .env
+.env.local
 *.npz
 .DS_Store
 outputs/quarantine/

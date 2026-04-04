@@ -1,5 +1,5 @@
 {
-  "run_date": "2026-04-01",
+  "run_date": "2026-04-04",
   "prompt_hash": "9c79deee3277",
   "embedding_drift": {
     "drift_score": -0.0,
@@ -19,10 +19,10 @@
     "failed_check_ids": []
   },
   "total_outputs": 25,
-  "schema_violations": 3,
-  "violation_rate": 0.12,
-  "trend": "rising",
+  "schema_violations": 0,
+  "violation_rate": 0.0,
+  "trend": "stable",
   "baseline_violation_rate": 0.0,
-  "status": "WARN",
-  "timestamp": "2026-04-01T20:07:20Z"
+  "status": "PASS",
+  "timestamp": "2026-04-04T17:32:49Z"
 }

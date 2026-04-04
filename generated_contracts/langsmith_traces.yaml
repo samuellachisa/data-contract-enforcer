@@ -61,5 +61,5 @@ quality:
 lineage:
   upstream: []
   downstream:
-  - id: week7-ai-extensions
+  - id: week6-synthesis-consumer
     description: Trace schema enforcement

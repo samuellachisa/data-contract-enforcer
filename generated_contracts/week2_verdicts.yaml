@@ -68,5 +68,5 @@ quality:
 lineage:
   upstream: []
   downstream:
-  - id: week7-ai-extensions
-    description: AI Contract Extension validates structured output schema for verdicts.
+  - id: week6-synthesis-consumer
+    description: Week 6 consumer validates structured verdict schema.

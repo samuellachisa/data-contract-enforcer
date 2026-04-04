@@ -21,6 +21,7 @@ import sys
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -30,6 +31,10 @@ from sklearn.feature_extraction.text import HashingVectorizer
 _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
+
+from contracts.common import load_repo_dotenv
+
+load_repo_dotenv()
 
 
 def _now_iso() -> str:
@@ -115,6 +120,54 @@ def _embed_texts_openai(texts: list[str], model: str = "text-embedding-3-small")
     return np.array(vecs, dtype=np.float32)
 
 
+def _openrouter_client() -> Any | None:
+    """OpenAI-compatible client for https://openrouter.ai (chat + embeddings)."""
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+    base = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    headers: dict[str, str] = {
+        "X-Title": os.environ.get("OPENROUTER_X_TITLE", "Week7-DataContractEnforcer"),
+    }
+    ref = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+    if ref:
+        headers["HTTP-Referer"] = ref
+    return OpenAI(api_key=api_key, base_url=base, default_headers=headers)
+
+
+def _embed_texts_openrouter(texts: list[str]) -> np.ndarray | None:
+    client = _openrouter_client()
+    if client is None:
+        return None
+    model = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+    vecs: list[list[float]] = []
+    batch = 100
+    for i in range(0, len(texts), batch):
+        chunk = texts[i : i + batch]
+        try:
+            resp = client.embeddings.create(model=model, input=chunk)
+        except Exception:
+            return None
+        ordered = sorted(resp.data, key=lambda d: d.index)
+        vecs.extend([list(d.embedding) for d in ordered])
+    return np.array(vecs, dtype=np.float32)
+
+
+def _embedding_backend_choice() -> str:
+    if os.environ.get("EMBEDDING_OFF", "").strip().lower() in ("1", "true", "yes"):
+        return "hashing"
+    use_or = os.environ.get("USE_OPENROUTER_EMBEDDINGS", "").strip().lower() in ("1", "true", "yes")
+    if use_or and os.environ.get("OPENROUTER_API_KEY"):
+        return "openrouter"
+    if os.environ.get("OPENAI_API_KEY"):
+        return "openai"
+    return "hashing"
+
+
 def _embedding_meta_path() -> Path:
     return _REPO / "schema_snapshots" / "embedding_baseline_meta.json"
 
@@ -134,52 +187,73 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
     idx = rng.choice(len(texts), size=sample_n, replace=False)
     sample_texts = [texts[i] for i in idx]
 
-    backend = "openai" if os.environ.get("OPENAI_API_KEY") and os.environ.get("EMBEDDING_OFF", "") not in ("1", "true") else "hashing"
+    backend = _embedding_backend_choice()
     meta_path = _embedding_meta_path()
     baseline_path = _REPO / "schema_snapshots" / "embedding_baselines.npz"
 
-    if backend == "openai":
-        emb = _embed_texts_openai(sample_texts)
+    def _api_drift_result(
+        backend_id: str,
+        model_name: str,
+        embed_fn: Callable[[list[str]], np.ndarray | None],
+    ) -> dict[str, Any] | None:
+        emb = embed_fn(sample_texts)
         if emb is None:
-            backend = "hashing"
-        else:
-            current = emb
-            current_centroid = np.mean(current, axis=0)
-            current_centroid = current_centroid / (np.linalg.norm(current_centroid) + 1e-9)
+            return None
+        current = emb
+        current_centroid = np.mean(current, axis=0)
+        current_centroid = current_centroid / (np.linalg.norm(current_centroid) + 1e-9)
 
-            if baseline_path.exists() and meta_path.exists():
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                if meta.get("backend") != "openai":
-                    baseline_path.unlink(missing_ok=True)
-                    meta_path.unlink(missing_ok=True)
+        if baseline_path.exists() and meta_path.exists():
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+            if meta.get("backend") != backend_id:
+                baseline_path.unlink(missing_ok=True)
+                meta_path.unlink(missing_ok=True)
 
-            if not baseline_path.exists():
-                np.savez(baseline_path, centroid=current_centroid.astype(np.float64))
-                meta_path.write_text(json.dumps({"backend": "openai", "model": "text-embedding-3-small"}), encoding="utf-8")
-                return {
-                    "drift_score": 0.0,
-                    "status": "PASS",
-                    "threshold": threshold,
-                    "baseline_created": True,
-                    "backend": "openai",
-                    "model": "text-embedding-3-small",
-                }
-
-            base = np.load(baseline_path)
-            baseline_centroid = base["centroid"].astype(np.float64)
-            baseline_centroid = baseline_centroid / (np.linalg.norm(baseline_centroid) + 1e-9)
-            c64 = current_centroid.astype(np.float64)
-            cosine_sim = float(np.dot(c64, baseline_centroid))
-            drift = 1.0 - cosine_sim
-            drift = round(float(drift), 4)
-            status = "FAIL" if drift > threshold else "PASS"
+        if not baseline_path.exists():
+            np.savez(baseline_path, centroid=current_centroid.astype(np.float64))
+            meta_path.write_text(json.dumps({"backend": backend_id, "model": model_name}), encoding="utf-8")
             return {
-                "drift_score": drift,
-                "status": status,
+                "drift_score": 0.0,
+                "status": "PASS",
                 "threshold": threshold,
-                "backend": "openai",
-                "model": "text-embedding-3-small",
+                "baseline_created": True,
+                "backend": backend_id,
+                "model": model_name,
             }
+
+        base = np.load(baseline_path)
+        baseline_centroid = base["centroid"].astype(np.float64)
+        baseline_centroid = baseline_centroid / (np.linalg.norm(baseline_centroid) + 1e-9)
+        c64 = current_centroid.astype(np.float64)
+        cosine_sim = float(np.dot(c64, baseline_centroid))
+        drift = 1.0 - cosine_sim
+        drift = round(float(drift), 4)
+        status = "FAIL" if drift > threshold else "PASS"
+        return {
+            "drift_score": drift,
+            "status": status,
+            "threshold": threshold,
+            "backend": backend_id,
+            "model": model_name,
+        }
+
+    if backend == "openrouter":
+        model_or = os.environ.get("OPENROUTER_EMBEDDING_MODEL", "openai/text-embedding-3-small")
+        out = _api_drift_result("openrouter", model_or, _embed_texts_openrouter)
+        if out is not None:
+            return out
+        backend = "hashing"
+
+    if backend == "openai":
+        model_oa = "text-embedding-3-small"
+        out = _api_drift_result(
+            "openai",
+            model_oa,
+            lambda tx: _embed_texts_openai(tx, model=model_oa),
+        )
+        if out is not None:
+            return out
+        backend = "hashing"
 
     # HashingVectorizer fallback (offline, deterministic)
     current = _embed_texts_hashing(sample_texts)

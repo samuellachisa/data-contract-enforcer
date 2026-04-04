@@ -311,6 +311,61 @@ def _llm_annotations_stub(
     }
 
 
+def _openrouter_chat_client() -> Any | None:
+    """OpenAI SDK pointed at OpenRouter (https://openrouter.ai/docs/quickstart)."""
+    api_key = os.environ.get("OPENROUTER_API_KEY")
+    if not api_key:
+        return None
+    try:
+        from openai import OpenAI
+    except Exception:
+        return None
+    base = os.environ.get("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1").rstrip("/")
+    headers: dict[str, str] = {
+        "X-Title": os.environ.get("OPENROUTER_X_TITLE", "Week7-DataContractEnforcer"),
+    }
+    ref = os.environ.get("OPENROUTER_HTTP_REFERER", "").strip()
+    if ref:
+        headers["HTTP-Referer"] = ref
+    return OpenAI(api_key=api_key, base_url=base, default_headers=headers)
+
+
+def _llm_annotate_openrouter(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any] | None:
+    client = _openrouter_chat_client()
+    if client is None:
+        return None
+    model = os.environ.get("OPENROUTER_CHAT_MODEL", "openai/gpt-4o-mini")
+    prompt = (
+        f'Column "{column}" in dataset "{table}". Neighbor fields: {neighbors}. '
+        f"Sample values: {samples[:5]!r}. "
+        'Reply with ONLY compact JSON: {"description":"...","business_rule":"...","cross_column_relationship":"..."}'
+    )
+    try:
+        r = client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": prompt}],
+            temperature=0.2,
+            max_tokens=400,
+        )
+        text = (r.choices[0].message.content or "").strip()
+        if text.startswith("```"):
+            text = text.split("```", 2)[1]
+            if text.startswith("json"):
+                text = text[4:].lstrip()
+        data = json.loads(text)
+        return {
+            "column": column,
+            "table": table,
+            "description": str(data.get("description", "")),
+            "business_rule": str(data.get("business_rule", "")),
+            "cross_column_relationship": str(data.get("cross_column_relationship", "")),
+            "samples": [str(s) for s in samples[:5]],
+            "provider": "openrouter",
+        }
+    except Exception:
+        return None
+
+
 def _llm_annotate_openai(column: str, table: str, samples: list[Any], neighbors: list[str]) -> dict[str, Any] | None:
     try:
         from openai import OpenAI
@@ -405,6 +460,11 @@ def _maybe_llm_annotate(
     if os.environ.get("CONTRACT_LLM_OFF", "").strip() in ("1", "true", "yes"):
         return _llm_annotations_stub(column, table, samples, neighbors, profile=profile)
     out = _llm_annotate_anthropic(column, table, samples, neighbors)
+    if out:
+        if profile:
+            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}
+        return out
+    out = _llm_annotate_openrouter(column, table, samples, neighbors)
     if out:
         if profile:
             out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}

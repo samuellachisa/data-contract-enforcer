@@ -6,6 +6,7 @@ scikit-learn>=1.3.0
 # Optional (slow on first install): set USE_YDATA=1 to enable in generator.py
 # ydata-profiling>=4.6.0
 requests>=2.31.0
+python-dotenv>=1.0.0
 
 # Optional: OpenAI embeddings + optional LLM contract annotations
 openai>=1.0.0

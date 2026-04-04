@@ -55,7 +55,7 @@ def main() -> None:
         )
     _write_jsonl(OUT / "week1" / "intent_records.jsonl", intents)
 
-    # Week 2 — verdicts (some intentionally invalid for LLM schema metric)
+    # Week 2 — verdicts (integer 1–5 scores; use tests or create_violation + violated.json for demo failures)
     rubric_path = ROOT / "rubrics" / "sample_rubric.yaml"
     rubric_path.parent.mkdir(parents=True, exist_ok=True)
     rubric_path.write_text("version: 1.2.0\ncriteria:\n  quality: {}\n", encoding="utf-8")
@@ -87,9 +87,6 @@ def main() -> None:
             "confidence": round(random.uniform(0.6, 0.99), 2),
             "evaluated_at": iso_z(base + timedelta(minutes=i)),
         }
-        # Inject invalid LLM output shape on a few rows (wrong score type)
-        if i in (3, 7, 11):
-            rec["scores"]["clarity"]["score"] = "three"  # type: ignore[assignment]
         verdicts.append(rec)
     _write_jsonl(OUT / "week2" / "verdicts.jsonl", verdicts)
 

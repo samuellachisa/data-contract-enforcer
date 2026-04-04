@@ -333,64 +333,85 @@ def _describe_violation(v: dict[str, Any]) -> str:
 def _recommended_actions(
     violations: list[dict[str, Any]], ai_metrics: dict[str, Any], *, repo: Path
 ) -> list[dict[str, Any]]:
-    actions: list[dict[str, Any]] = []
+    """Return up to three distinct, ordered remediation steps (rubric: prioritised actions)."""
     runner = (repo / "contracts" / "runner.py").resolve()
     extractor = (repo / "src" / "week3" / "extractor.py").resolve()
-    # Prioritize concrete contract breaks first.
-    for v in violations:
-        check_id = str(v.get("check_id", ""))
-        if "week3.extracted_facts.confidence.range" in check_id:
-            actions.append(
-                {
-                    "priority": 1,
-                    "risk_reduction": "High",
-                    "action": (
-                        f"Update `{extractor}` so `extracted_facts[*].confidence` is a float in 0.0–1.0 "
-                        "(contract `week3-document-refinery-extractions`, clause `week3.extracted_facts.confidence.range`)."
-                    ),
-                }
-            )
-        if "week3.extracted_facts.entity_refs.relationship" in check_id:
-            actions.append(
-                {
-                    "priority": 2,
-                    "risk_reduction": "High",
-                    "action": (
-                        f"Update `{extractor}` so each `extracted_facts[*].entity_refs[]` references an `entity_id` "
-                        "from the same record’s `entities[]` (clause `week3.extracted_facts.entity_refs.relationship`)."
-                    ),
-                }
-            )
+    baselines_path = (repo / "schema_snapshots" / "baselines.json").resolve()
+    check_ids = {str(v.get("check_id", "")) for v in violations}
 
-    if not actions:
-        actions.append(
+    candidates: list[dict[str, Any]] = []
+    if any("week3.extracted_facts.confidence.range" in c for c in check_ids):
+        candidates.append(
+            {
+                "priority": 1,
+                "risk_reduction": "High",
+                "action": (
+                    f"Update `{extractor}` so `extracted_facts[*].confidence` is a float in 0.0–1.0 "
+                    "(contract `week3-document-refinery-extractions`, clause `week3.extracted_facts.confidence.range`)."
+                ),
+            }
+        )
+    if any("week3.extracted_facts.entity_refs.relationship" in c for c in check_ids):
+        candidates.append(
+            {
+                "priority": 2,
+                "risk_reduction": "High",
+                "action": (
+                    f"Update `{extractor}` so each `extracted_facts[*].entity_refs[]` references an `entity_id` "
+                    "from the same record’s `entities[]` (clause `week3.extracted_facts.entity_refs.relationship`)."
+                ),
+            }
+        )
+    if any("week3.extracted_facts.confidence.statistical_drift" in c for c in check_ids):
+        candidates.append(
+            {
+                "priority": 3,
+                "risk_reduction": "High",
+                "action": (
+                    f"After restoring `extracted_facts[*].confidence` to 0.0–1.0, re-run `{runner}` and refresh "
+                    f"statistical baselines in `{baselines_path}` for that field "
+                    "(clause `week3.extracted_facts.confidence.statistical_drift`)."
+                ),
+            }
+        )
+
+    if not candidates:
+        candidates.append(
             {
                 "priority": 1,
                 "risk_reduction": "Medium",
-                "action": f"Review failing rows in validation_reports/*.json and align producers with generated_contracts/*.yaml.",
+                "action": (
+                    f"Review failing rows in `validation_reports/*.json` and align producers with "
+                    f"`generated_contracts/*.yaml`."
+                ),
             }
         )
 
-    # AI risks
     if ai_metrics.get("status") == "WARN":
-        actions.append(
+        candidates.append(
             {
-                "priority": 3,
+                "priority": 4,
                 "risk_reduction": "Medium",
-                "action": "Stabilize Week 2 structured verdict outputs (scores as integers 1–5); see `contracts/ai_extensions.py` and `outputs/week2/verdicts.jsonl`.",
+                "action": (
+                    "Stabilize Week 2 structured verdict outputs so `scores[*].score` is integer 1–5 "
+                    "(contract `week2-digital-courtroom-verdicts`, clause `week2.scores.criterion.range`); "
+                    "inspect `outputs/week2/verdicts.jsonl` and `contracts/ai_extensions.py`."
+                ),
             }
         )
     else:
-        actions.append(
+        candidates.append(
             {
-                "priority": 3,
+                "priority": 4,
                 "risk_reduction": "Low",
-                "action": f"Add `{runner}` as a CI step before Week 3 deployments; refresh drift baselines monthly.",
+                "action": (
+                    f"Add `{runner}` as a CI step before Week 3 deployments; refresh drift baselines monthly."
+                ),
             }
         )
 
-    actions.sort(key=lambda x: x["priority"])
-    return actions[:3]
+    candidates.sort(key=lambda x: x["priority"])
+    return candidates[:3]
 
 
 def generate_report(

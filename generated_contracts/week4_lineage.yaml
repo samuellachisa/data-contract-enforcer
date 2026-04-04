@@ -45,8 +45,8 @@ quality:
 lineage:
   upstream: []
   downstream:
-  - id: week7-violation-attributor
-    description: ViolationAttributor consumes lineage for blame chains
+  - id: week6-synthesis-consumer
+    description: Week 6 synthesis / enforcement consumes lineage for blame chains
     fields_consumed:
     - nodes
     - edges

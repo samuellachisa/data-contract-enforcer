@@ -168,6 +168,9 @@ lineage:
     description: Downstream pipeline `pipeline::week4-lineage-generation`.
     fields_consumed: *id001
     breaking_if_changed: *id002
+  registry_note: Blast radius uses registry_subscribers as primary source; downstream is lineage enrichment only.
+  registry_subscribers:
+  - week4-cartographer
 profiling:
   structural_engine: pandas-fallback
   flat_row_count: 55
