@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -18,6 +19,10 @@ from pathlib import Path
 from typing import Any, Iterable
 
 _REPO = Path(__file__).resolve().parents[1]
+if str(_REPO) not in sys.path:
+    sys.path.insert(0, str(_REPO))
+
+from contracts.registry import subscriber_summary_entries, subscribers_for_violation
 
 
 def _now_iso() -> str:
@@ -214,13 +219,15 @@ def _blast_radius_from_file(nodes: dict[str, Any], edges: list[dict[str, Any]], 
         if src and tgt:
             fwd.setdefault(str(src), []).append(str(tgt))
 
-    q = [file_node_id]
+    q: list[tuple[str, int]] = [(file_node_id, 0)]
     seen = {file_node_id}
     affected_files: set[str] = set()
     affected_pipes: set[str] = set()
+    contamination_depth = 0
 
     while q:
-        cur = q.pop(0)
+        cur, depth = q.pop(0)
+        contamination_depth = max(contamination_depth, depth)
         for nxt in fwd.get(cur, []):
             if nxt in seen:
                 continue
@@ -230,12 +237,13 @@ def _blast_radius_from_file(nodes: dict[str, Any], edges: list[dict[str, Any]], 
                 affected_files.add(nxt)
             if str(n.get("type")) in {"PIPELINE", "MODEL"}:
                 affected_pipes.add(nxt)
-            q.append(nxt)
+            q.append((nxt, depth + 1))
 
     return {
         "affected_nodes": sorted(list(affected_files)),
         "affected_pipelines": sorted(list(affected_pipes)),
         "estimated_records": 0,
+        "contamination_depth": contamination_depth,
     }
 
 
@@ -434,7 +442,20 @@ def attribute_violations(input_path: Path, output_path: Path) -> None:
             upstream_files = [(nid, 0) for nid, n in nodes.items() if str(n.get("type")) == "FILE"][:1]
 
         blame_chain = []
-        blast = {"affected_nodes": [], "affected_pipelines": [], "estimated_records": 0}
+        blast: dict[str, Any] = {
+            "subscribers": [],
+            "affected_nodes": [],
+            "affected_pipelines": [],
+            "estimated_records": 0,
+            "contamination_depth": 0,
+            "registry_query": {"source_contract_id": "", "check_id": "", "matched_count": 0},
+        }
+
+        cid = str(v.get("source_contract_id", "") or "")
+        chk = str(v.get("check_id", "") or "")
+        reg_subs = subscribers_for_violation(_REPO, cid, chk)
+        blast["subscribers"] = subscriber_summary_entries(reg_subs)
+        blast["registry_query"] = {"source_contract_id": cid, "check_id": chk, "matched_count": len(reg_subs)}
 
         for rank, (file_node_id, hops) in enumerate(upstream_files, start=1):
             node = nodes.get(file_node_id, {})
@@ -448,14 +469,22 @@ def attribute_violations(input_path: Path, output_path: Path) -> None:
             confidence_score = _confidence_score(days_since, hops)
 
             if rank == 1:
-                blast = _blast_radius_from_file(nodes, edges, file_node_id)
+                lineage_blast = _blast_radius_from_file(nodes, edges, file_node_id)
                 est = v.get("records_failing")
                 if est is None:
                     est = v.get("estimated_records")
                 try:
-                    blast["estimated_records"] = int(est) if est is not None else 0
+                    lineage_blast["estimated_records"] = int(est) if est is not None else 0
                 except (TypeError, ValueError):
-                    blast["estimated_records"] = 0
+                    lineage_blast["estimated_records"] = 0
+                blast["affected_nodes"] = lineage_blast.get("affected_nodes", [])
+                blast["affected_pipelines"] = lineage_blast.get("affected_pipelines", [])
+                blast["estimated_records"] = lineage_blast.get("estimated_records", 0)
+                blast["contamination_depth"] = lineage_blast.get("contamination_depth", 0)
+                blast["lineage_enrichment"] = {
+                    "forward_reachable_files": lineage_blast.get("affected_nodes", []),
+                    "forward_reachable_pipelines": lineage_blast.get("affected_pipelines", []),
+                }
 
             blame_chain.append(
                 {

@@ -39,9 +39,15 @@ Generated dbt schema YAML mirrors the Bitol contracts with **multiple models**, 
 
 **3. ValidationRunner — Week 3 / Week 5 (required evaluator paths)**
 
+`--mode` controls exit codes after the report is written (default **AUDIT** = always exit 0):
+
+- **AUDIT** — run all checks, never fail the process.
+- **WARN** — exit **1** if any check has `status=FAIL` and `severity=CRITICAL`.
+- **ENFORCE** — exit **1** if any check has `status=FAIL` and `severity` is **CRITICAL** or **HIGH**.
+
 ```powershell
-python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions.jsonl --output validation_reports/week3_latest.json
-python contracts/runner.py --contract generated_contracts/week5_events.yaml --data outputs/week5/events.jsonl --output validation_reports/week5_latest.json
+python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions.jsonl --output validation_reports/week3_latest.json --mode AUDIT
+python contracts/runner.py --contract generated_contracts/week5_events.yaml --data outputs/week5/events.jsonl --output validation_reports/week5_latest.json --mode AUDIT
 ```
 
 **Other single-file contracts**
@@ -67,8 +73,16 @@ python contracts/ai_extensions.py
 
 **5. Violation attributor** (`violation_log/violations_with_blame.jsonl`)
 
+Blast radius: **`contract_registry/subscriptions.yaml`** is queried first (subscriber list + matched `breaking_fields`). Week 4 lineage forward reachability adds `lineage_enrichment` and `contamination_depth`.
+
 ```powershell
 python contracts/attributor.py --input violation_log/violations.jsonl --output violation_log/violations_with_blame.jsonl
+```
+
+**5b. Deduplicate `violations.jsonl` (after repeated `ai_extensions` runs)**
+
+```powershell
+python scripts/refresh_submission_artifacts.py
 ```
 
 **6. Schema evolution**
@@ -87,6 +101,18 @@ python contracts/report_generator.py
 
 Outputs: `enforcer_report/report_data.json`, `enforcer_report/report_<YYYYMMDD>.pdf`.
 
+## Contract registry (Tier 1)
+
+Manual file: **`contract_registry/subscriptions.yaml`** — who subscribes to each `contract_id`, which fields they consume, and which `breaking_fields` trigger blast-radius alerts. Loader: `contracts/registry.py`.
+
+## Tests and CI
+
+```powershell
+pytest -q
+```
+
+GitHub Actions (`.github/workflows/ci.yml`) runs `generator --all`, ValidationRunner on Week 3 and Week 5 with `--mode AUDIT`, then `pytest`.
+
 ## Repository layout
 
 | Path | Role |
@@ -99,6 +125,9 @@ Outputs: `enforcer_report/report_data.json`, `enforcer_report/report_<YYYYMMDD>.
 | `contracts/report_generator.py` | ReportGenerator |
 | `contracts/validation_checks.py` | Week 1/2/4, LangSmith, cross-system checks |
 | `contracts/violation_record.py` | Week 8–compatible violation shape helper |
+| `contracts/registry.py` | Load `contract_registry/subscriptions.yaml` |
+| `contract_registry/subscriptions.yaml` | Subscriber registry (blast radius) |
+| `scripts/refresh_submission_artifacts.py` | Dedupe `violation_log/violations.jsonl` |
 | `generated_contracts/` | Generated YAML + dbt |
 | `outputs/` | JSONL inputs |
 | `src/week1/handlers/` … | Stub files so Week 1 `code_refs.file` existence checks pass |

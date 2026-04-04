@@ -14,3 +14,6 @@ anthropic>=0.18.0
 
 # PDF report (optional; report_data.json is always produced)
 fpdf2>=2.7.0
+
+# Tests (CI / local)
+pytest>=8.0.0

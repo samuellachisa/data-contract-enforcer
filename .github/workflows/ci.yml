@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      CONTRACT_LLM_OFF: "1"
+      EMBEDDING_OFF: "1"
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: ContractGenerator (all outputs)
+        run: python contracts/generator.py --all --output generated_contracts
+
+      - name: ValidationRunner Week 3 + Week 5
+        run: |
+          python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions.jsonl --output validation_reports/week3_ci.json --mode AUDIT
+          python contracts/runner.py --contract generated_contracts/week5_events.yaml --data outputs/week5/events.jsonl --output validation_reports/week5_ci.json --mode AUDIT
+
+      - name: Pytest
+        run: pytest -q

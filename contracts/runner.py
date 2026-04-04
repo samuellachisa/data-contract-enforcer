@@ -532,11 +532,35 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
     return report
 
 
+def pipeline_should_block(report: dict[str, Any], mode: str) -> bool:
+    """
+    AUDIT: never block. WARN: block on FAIL+CRITICAL. ENFORCE: block on FAIL+(CRITICAL|HIGH).
+    """
+    m = (mode or "AUDIT").strip().upper()
+    if m == "AUDIT":
+        return False
+    for r in report.get("results", []):
+        if r.get("status") != "FAIL":
+            continue
+        sev = str(r.get("severity", "")).upper()
+        if m == "WARN" and sev == "CRITICAL":
+            return True
+        if m == "ENFORCE" and sev in {"CRITICAL", "HIGH"}:
+            return True
+    return False
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="ValidationRunner (Week 7)")
     parser.add_argument("--contract", type=Path, default=None, help="generated_contracts/*.yaml")
     parser.add_argument("--data", type=Path, default=None, help="outputs/.../*.jsonl")
     parser.add_argument("--output", type=Path, help="validation_reports/....json")
+    parser.add_argument(
+        "--mode",
+        choices=["AUDIT", "WARN", "ENFORCE"],
+        default="AUDIT",
+        help="AUDIT: always exit 0. WARN: exit 1 if any FAIL with CRITICAL. ENFORCE: exit 1 if FAIL with CRITICAL or HIGH.",
+    )
     parser.add_argument(
         "--cross-dependencies",
         action="store_true",
@@ -554,12 +578,18 @@ def main() -> None:
         out.parent.mkdir(parents=True, exist_ok=True)
         out.write_text(json.dumps(report, indent=2), encoding="utf-8")
         print(f"Wrote {out}")
+        if pipeline_should_block(report, args.mode):
+            print(f"Blocking (--mode={args.mode}): failing checks exceed policy.", file=sys.stderr)
+            raise SystemExit(1)
         return
 
     if not args.contract or not args.data:
         parser.error("Provide --contract and --data, or use --cross-dependencies")
 
-    run_validation(args.contract.resolve(), args.data.resolve(), out, root)
+    report = run_validation(args.contract.resolve(), args.data.resolve(), out, root)
+    if pipeline_should_block(report, args.mode):
+        print(f"Blocking (--mode={args.mode}): failing checks exceed policy.", file=sys.stderr)
+        raise SystemExit(1)
 
 
 if __name__ == "__main__":

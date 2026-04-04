@@ -49,8 +49,35 @@ def _load_jsonl(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def _append_violation(path: Path, violation: dict[str, Any]) -> None:
+def _violation_dedupe_key(violation: dict[str, Any]) -> tuple[Any, ...]:
+    return (
+        violation.get("type"),
+        violation.get("check_id"),
+        violation.get("verdict_id"),
+    )
+
+
+def _violation_already_logged(path: Path, key: tuple[Any, ...]) -> bool:
+    if not path.exists():
+        return False
+    with path.open("r", encoding="utf-8") as f:
+        for line in f:
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("//"):
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if _violation_dedupe_key(obj) == key:
+                return True
+    return False
+
+
+def _append_violation(path: Path, violation: dict[str, Any], *, dedupe: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
+    if dedupe and _violation_already_logged(path, _violation_dedupe_key(violation)):
+        return
     # If file doesn't exist, add injection comment.
     if not path.exists():
         path.write_text("# Auto-appended violations by ai_extensions.\n", encoding="utf-8")
@@ -320,10 +347,11 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
         trend = "rising"
     status = "WARN" if trend == "rising" else "PASS"
 
+    vlog = _REPO / "violation_log" / "violations.jsonl"
     # Append violation records for each failed item (bounded to keep output small).
     for f in failures[:50]:
         _append_violation(
-            _REPO / "violation_log" / "violations.jsonl",
+            vlog,
             {
                 "violation_id": str(uuid.uuid4()),
                 "type": "llm_output_schema",
@@ -336,6 +364,26 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
                 "severity": "CRITICAL",
                 "blame_hint": {"file": "src/week3/extractor.py", "line_start": 1, "line_end": 40},
             },
+            dedupe=True,
+        )
+
+    if status == "WARN" and trend == "rising":
+        _append_violation(
+            vlog,
+            {
+                "violation_id": str(uuid.uuid4()),
+                "type": "llm_output_schema_trend",
+                "check_id": "week2.verdict_record.violation_rate",
+                "detected_at": _now_iso(),
+                "message": (
+                    f"LLM output schema violation rate rising vs baseline: "
+                    f"rate={violation_rate:.4f}, baseline={baseline_violation_rate:.4f}"
+                ),
+                "source_contract_id": "week2-digital-courtroom-verdicts",
+                "records_failing": len(failures),
+                "severity": "WARNING",
+            },
+            dedupe=True,
         )
 
     return {
@@ -394,6 +442,26 @@ def main() -> None:
     _write_prompt_input_schema_file()
 
     embedding = check_embedding_drift(extractions)
+    vlog_main = _REPO / "violation_log" / "violations.jsonl"
+    if embedding.get("status") == "FAIL":
+        _append_violation(
+            vlog_main,
+            {
+                "violation_id": str(uuid.uuid4()),
+                "type": "embedding_drift",
+                "check_id": "week3.extracted_facts.text.embedding_drift",
+                "detected_at": _now_iso(),
+                "message": (
+                    f"Embedding centroid drift exceeds threshold: drift_score={embedding.get('drift_score')}, "
+                    f"threshold={embedding.get('threshold')}, backend={embedding.get('backend')}"
+                ),
+                "source_contract_id": "week3-document-refinery-extractions",
+                "records_failing": 1,
+                "severity": "HIGH",
+                "blame_hint": {"file": "src/week3/extractor.py", "line_start": 1, "line_end": 80},
+            },
+            dedupe=True,
+        )
     prompt = check_prompt_input_schema(extractions)
     llm = validate_llm_output_schema(verdicts)
     traces_report = check_langsmith_traces(traces)
