@@ -601,6 +601,8 @@ def pipeline_should_block(report: dict[str, Any], mode: str) -> bool:
     if m == "AUDIT":
         return False
     for r in report.get("results", []):
+        if not isinstance(r, dict):
+            continue
         if r.get("status") != "FAIL":
             continue
         sev = str(r.get("severity", "")).upper()

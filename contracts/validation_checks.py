@@ -52,8 +52,38 @@ def _apply_numeric_mean_drift(
             f"Established statistical baseline for {baseline_key_suffix}.",
         )
         return
-    bm = baselines[key]["mean"]
-    bsd = max(float(baselines[key].get("std", 0.0)), 1e-9)
+    raw = baselines[key]
+    if not isinstance(raw, dict):
+        add(
+            drift_id,
+            column_name,
+            "drift",
+            "ERROR",
+            "malformed_baseline_entry",
+            "object with numeric mean and std",
+            "LOW",
+            0,
+            [],
+            f"Baseline entry `{key}` is not a JSON object; repair or remove `schema_snapshots/baselines.json`.",
+        )
+        return
+    try:
+        bm = float(raw["mean"])
+        bsd = max(float(raw.get("std", 0.0)), 1e-9)
+    except (KeyError, TypeError, ValueError):
+        add(
+            drift_id,
+            column_name,
+            "drift",
+            "ERROR",
+            "invalid_baseline_mean_or_std",
+            "numeric mean and std",
+            "LOW",
+            0,
+            [],
+            f"Baseline `{key}` is missing mean/std or has non-numeric values; repair `schema_snapshots/baselines.json`.",
+        )
+        return
     dev = abs(m - bm) / bsd
     if dev > 3:
         drift_status, sev = "FAIL", "HIGH"

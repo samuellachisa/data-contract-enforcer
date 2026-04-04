@@ -52,7 +52,11 @@ def load_baselines(root: Path) -> dict[str, Any]:
     p = baselines_path(root)
     if not p.exists():
         return {}
-    return json.loads(p.read_text(encoding="utf-8"))
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def save_baselines(root: Path, data: dict[str, Any]) -> None:

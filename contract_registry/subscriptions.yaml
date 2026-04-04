@@ -1,54 +1,244 @@
 # Manually maintained. Every inter-system data dependency must be listed here.
 # Blast radius for violations: ViolationAttributor queries this file first (Tier 1 registry).
+#
+# breaking_fields.field values are ValidationRunner / cross-validation check_id suffixes
+# (the part after weekN. / langsmith. / cross.*), except:
+#   - runner.schema.required  → matches all runner.schema.required.* checks
+#   - cross.ingest          → matches cross.ingest.* (per-dataset JSONL ingest in cross-system run)
 
 subscriptions:
+  # --- Week 3 → Week 4 (lineage producer consumes extractions) ---
   - contract_id: week3-document-refinery-extractions
     subscriber_id: week4-cartographer
     subscriber_team: week4
     fields_consumed: [doc_id, extracted_facts, extraction_model]
-    breaking_fields:
-      - field: extracted_facts.confidence
-        reason: used for node ranking; scale change breaks ranking logic
-      - field: doc_id
-        reason: primary key for node identity in lineage graph
+    breaking_fields: &week3_runner_clauses
+      - field: runner.schema.required
+        reason: ValidationRunner validate_generic_missing_column for Bitol schema.required top-level fields
+      - field: doc_id.required
+        reason: clause week3.doc_id.required
+      - field: doc_id.uuid
+        reason: clause week3.doc_id.uuid
+      - field: doc_id.unique
+        reason: clause week3.doc_id.unique
+      - field: source_hash.pattern
+        reason: clause week3.source_hash.pattern
+      - field: extracted_facts.non_empty
+        reason: clause week3.extracted_facts.non_empty
+      - field: extracted_facts.confidence.range
+        reason: clause week3.extracted_facts.confidence.range
+      - field: extracted_facts.entity_refs.relationship
+        reason: clause week3.extracted_facts.entity_refs.relationship
+      - field: entities.type.enum
+        reason: clause week3.entities.type.enum
+      - field: processing_time_ms.positive
+        reason: clause week3.processing_time_ms.positive
+      - field: extraction_model.pattern
+        reason: clause week3.extraction_model.pattern
+      - field: extracted_facts.confidence.drift_baseline
+        reason: clause week3.extracted_facts.confidence.drift_baseline
+      - field: extracted_facts.confidence.statistical_drift
+        reason: clause week3.extracted_facts.confidence.statistical_drift
+      - field: processing_time_ms.drift_baseline
+        reason: clause week3.processing_time_ms.drift_baseline
+      - field: processing_time_ms.statistical_drift
+        reason: clause week3.processing_time_ms.statistical_drift
+      - field: extracted_facts.text.embedding_drift
+        reason: clause week3.extracted_facts.text.embedding_drift (contracts/ai_extensions.py embedding drift)
     validation_mode: ENFORCE
     registered_at: "2026-01-10T09:00:00Z"
     contact: week4-team@org.com
 
-  # Week 4 → Week 6 consumer (synthesis / enforcement hub). Same role as "Week 6" in the practitioner manual.
+  # --- Week 3 → Week 7 (runner + generator + ai_extensions consume extractions) ---
+  - contract_id: week3-document-refinery-extractions
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [doc_id, extracted_facts, entities, extraction_model, processing_time_ms, source_hash]
+    breaking_fields: *week3_runner_clauses
+    validation_mode: ENFORCE
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com
+
+  # --- Week 4 → Week 6 (synthesis / enforcement hub) ---
   - contract_id: week4-brownfield-lineage-snapshots
     subscriber_id: week6-synthesis-consumer
     subscriber_team: week6
     fields_consumed: [nodes, edges, git_commit]
-    breaking_fields:
-      - field: edges.relationship
-        reason: attributor assumes IMPORTS|CALLS|READS|WRITES|PRODUCES|CONSUMES for traversal
-      - field: nodes.node_id
-        reason: stable node identity required for blast radius and blame chain
+    breaking_fields: &week4_runner_clauses
+      - field: runner.schema.required
+        reason: ValidationRunner validate_generic_missing_column for lineage contract schema
+      - field: snapshot.non_empty
+        reason: clause week4.snapshot.non_empty
+      - field: snapshot_id.uuid
+        reason: clause week4.snapshot_id.uuid
+      - field: git_commit.hex40
+        reason: clause week4.git_commit.hex40
+      - field: nodes.type.enum
+        reason: clause week4.nodes.type.enum
+      - field: edges.endpoints
+        reason: clause week4.edges.endpoints
+      - field: edges.relationship.enum
+        reason: clause week4.edges.relationship.enum
+      - field: edges.confidence.range
+        reason: clause week4.edges.confidence.range
+      - field: captured_at.iso8601
+        reason: clause week4.captured_at.iso8601
     validation_mode: ENFORCE
     registered_at: "2026-01-10T10:00:00Z"
     contact: week6-platform@org.com
 
+  # --- Week 4 → Week 7 (attributor BFS, cross-system W3↔W4, schema snapshots / reports) ---
+  - contract_id: week4-brownfield-lineage-snapshots
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [nodes, edges, git_commit, snapshot_id, captured_at, codebase_root]
+    breaking_fields: *week4_runner_clauses
+    validation_mode: ENFORCE
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com
+
+  # --- Week 5 → Week 6 ---
   - contract_id: week5-event-sourcing-events
     subscriber_id: week6-synthesis-consumer
     subscriber_team: week6
     fields_consumed: [payload, event_type, metadata, sequence_number, occurred_at, recorded_at]
-    breaking_fields:
-      - field: payload
-        reason: DocumentProcessed JSON must match event schema registry
-      - field: sequence_number
-        reason: monotonic per aggregate_id required for replay correctness
+    breaking_fields: &week5_runner_clauses
+      - field: runner.schema.required
+        reason: ValidationRunner validate_generic_missing_column for event contract schema
+      - field: event_type.pascal
+        reason: clause week5.event_type.pascal
+      - field: sequence_number.monotonic
+        reason: clause week5.sequence_number.monotonic
+      - field: recorded_at.order
+        reason: clause week5.recorded_at.order
+      - field: payload.jsonschema
+        reason: clause week5.payload.jsonschema
+      - field: payload.bytes.drift_baseline
+        reason: clause week5.payload.bytes.drift_baseline
+      - field: payload.bytes.statistical_drift
+        reason: clause week5.payload.bytes.statistical_drift
     validation_mode: AUDIT
     registered_at: "2026-01-10T10:30:00Z"
     contact: week6-platform@org.com
 
+  # --- Week 5 → Week 7 ---
+  - contract_id: week5-event-sourcing-events
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [payload, event_type, metadata, sequence_number, aggregate_id, occurred_at, recorded_at]
+    breaking_fields: *week5_runner_clauses
+    validation_mode: ENFORCE
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com
+
+  # --- LangSmith traces → Week 6 ---
   - contract_id: langsmith-trace-runs
     subscriber_id: week6-synthesis-consumer
     subscriber_team: week6
     fields_consumed: [total_tokens, prompt_tokens, completion_tokens, run_type, start_time, end_time]
-    breaking_fields:
-      - field: total_tokens
-        reason: must equal prompt_tokens + completion_tokens for cost accounting
+    breaking_fields: &langsmith_runner_clauses
+      - field: runner.schema.required
+        reason: ValidationRunner validate_generic_missing_column for trace contract schema
+      - field: id.uuid
+        reason: clause langsmith.id.uuid
+      - field: run_type.enum
+        reason: clause langsmith.run_type.enum
+      - field: end_time.after_start
+        reason: clause langsmith.end_time.after_start
+      - field: total_tokens.sum
+        reason: clause langsmith.total_tokens.sum
+      - field: total_cost.non_negative
+        reason: clause langsmith.total_cost.non_negative
     validation_mode: AUDIT
     registered_at: "2026-01-10T11:00:00Z"
     contact: week6-platform@org.com
+
+  # --- LangSmith traces → Week 7 (runner + ai_extensions trace checks) ---
+  - contract_id: langsmith-trace-runs
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [id, name, run_type, start_time, end_time, total_tokens, prompt_tokens, completion_tokens, total_cost]
+    breaking_fields: *langsmith_runner_clauses
+    validation_mode: AUDIT
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com
+
+  # --- Week 1 → Week 7 ---
+  - contract_id: week1-intent-code-correlator-intent-records
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [intent_id, code_refs, governance_tags, created_at, description]
+    breaking_fields: &week1_runner_clauses
+      - field: runner.schema.required
+        reason: ValidationRunner validate_generic_missing_column for intent contract schema
+      - field: intent_id.required
+        reason: clause week1.intent_id.required
+      - field: intent_id.uuid
+        reason: clause week1.intent_id.uuid
+      - field: code_refs.non_empty
+        reason: clause week1.code_refs.non_empty
+      - field: code_refs.confidence.range
+        reason: clause week1.code_refs.confidence.range
+      - field: code_refs.line_order
+        reason: clause week1.code_refs.line_order
+      - field: code_refs.file.exists
+        reason: clause week1.code_refs.file.exists
+      - field: governance_tags.non_empty
+        reason: clause week1.governance_tags.non_empty
+      - field: created_at.iso8601
+        reason: clause week1.created_at.iso8601
+      - field: code_refs.confidence.drift_baseline
+        reason: clause week1.code_refs.confidence.drift_baseline
+      - field: code_refs.confidence.statistical_drift
+        reason: clause week1.code_refs.confidence.statistical_drift
+    validation_mode: AUDIT
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com
+
+  # --- Week 2 → Week 7 (includes ai_extensions synthetic check_ids) ---
+  - contract_id: week2-digital-courtroom-verdicts
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [verdict_id, target_ref, scores, overall_verdict, overall_score, confidence, rubric_id, rubric_version]
+    breaking_fields: &week2_runner_clauses
+      - field: runner.schema.required
+        reason: ValidationRunner validate_generic_missing_column for verdict contract schema
+      - field: overall_verdict.enum
+        reason: clause week2.overall_verdict.enum
+      - field: scores.criterion.range
+        reason: clause week2.scores.criterion.range
+      - field: overall_score.weighted_mean
+        reason: clause week2.overall_score.weighted_mean
+      - field: rubric_id.sha256
+        reason: clause week2.rubric_id.sha256
+      - field: rubric_version.semver
+        reason: clause week2.rubric_version.semver
+      - field: confidence.range
+        reason: clause week2.confidence.range
+      - field: confidence.drift_baseline
+        reason: clause week2.confidence.drift_baseline
+      - field: confidence.statistical_drift
+        reason: clause week2.confidence.statistical_drift
+      - field: verdict_record.schema
+        reason: contracts/ai_extensions.py structured LLM output schema check (week2.verdict_record.schema)
+      - field: verdict_record.violation_rate
+        reason: contracts/ai_extensions.py violation rate trend (week2.verdict_record.violation_rate)
+    validation_mode: AUDIT
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com
+
+  # --- Cross-system report (run_cross_system_validation) → Week 7 ---
+  - contract_id: cross-system-dependencies
+    subscriber_id: week7-data-contract-enforcer
+    subscriber_team: week7
+    fields_consumed: [week1_intent_records, week2_verdicts, week3_extractions, week4_lineage_snapshots]
+    breaking_fields:
+      - field: cross.ingest
+        reason: matches cross.ingest.<dataset>.line_* JSONL ingest ERROR rows
+      - field: target_ref.in_week1_code_refs
+        reason: clause cross.week2.target_ref.in_week1_code_refs (W2 target_ref must appear in W1 code_refs.file)
+      - field: doc_id.as_lineage_node
+        reason: clause cross.week4.doc_id.as_lineage_node (each W3 doc_id as table::doc:{id} in latest lineage)
+    validation_mode: ENFORCE
+    registered_at: "2026-04-04T12:00:00Z"
+    contact: week7-enforcer@org.com

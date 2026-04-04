@@ -8,17 +8,20 @@ Implements:
 3) Structured LLM Output Enforcement for Week 2 verdict records
 
 Outputs:
-- validation_reports/ai_metrics.json
+- validation_reports/ai_metrics.json (or --output)
+- validation_reports/ai_monitoring_metrics.json for dashboards (or CONTRACT_AI_MONITORING_OUTPUT_PATH / --monitoring-output; skip if CONTRACT_AI_MONITORING_DISABLE=1)
 - violation_log/violations_with_blame.jsonl is produced by attributor; here we append to violations.jsonl
 """
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import hashlib
 import json
 import os
 import sys
 import uuid
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from collections.abc import Callable
@@ -37,8 +40,179 @@ from contracts.common import load_repo_dotenv
 load_repo_dotenv()
 
 
+@dataclass(frozen=True)
+class AIExtensionConfig:
+    """
+    Tunable thresholds for AI contract checks.
+
+    Environment (optional overrides; loaded by load_ai_extension_config_from_env):
+      CONTRACT_AI_EMBEDDING_DRIFT_THRESHOLD
+      CONTRACT_AI_EMBEDDING_SAMPLE_SIZE
+      CONTRACT_AI_LLM_VIOLATION_TREND_MULTIPLIER
+      CONTRACT_AI_LLM_VIOLATION_TREND_MIN_DELTA
+      CONTRACT_AI_PROMPT_PREVIEW_MAX_LENGTH
+      CONTRACT_AI_HASHING_N_FEATURES
+
+    Monitoring (file + hooks only; does not change check outcomes):
+      CONTRACT_AI_MONITORING_OUTPUT_PATH — default validation_reports/ai_monitoring_metrics.json
+      CONTRACT_AI_MONITORING_DISABLE=1 — skip writing monitoring JSON and hook emission
+    """
+
+    embedding_drift_threshold: float = 0.15
+    embedding_sample_size: int = 200
+    llm_violation_trend_multiplier: float = 1.5
+    llm_violation_trend_min_delta: float = 0.001
+    prompt_preview_max_length: int = 8000
+    hashing_n_features: int = 384
+
+
+def _env_float(key: str, default: float) -> float:
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        return default
+
+
+def _env_int(key: str, default: int) -> int:
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw, 10)
+    except ValueError:
+        return default
+
+
+def load_ai_extension_config_from_env() -> AIExtensionConfig:
+    """Defaults + CONTRACT_AI_* environment overrides (safe parse; bad values fall back)."""
+    return AIExtensionConfig(
+        embedding_drift_threshold=_env_float("CONTRACT_AI_EMBEDDING_DRIFT_THRESHOLD", 0.15),
+        embedding_sample_size=max(1, _env_int("CONTRACT_AI_EMBEDDING_SAMPLE_SIZE", 200)),
+        llm_violation_trend_multiplier=_env_float("CONTRACT_AI_LLM_VIOLATION_TREND_MULTIPLIER", 1.5),
+        llm_violation_trend_min_delta=_env_float("CONTRACT_AI_LLM_VIOLATION_TREND_MIN_DELTA", 0.001),
+        prompt_preview_max_length=max(1, _env_int("CONTRACT_AI_PROMPT_PREVIEW_MAX_LENGTH", 8000)),
+        hashing_n_features=max(16, _env_int("CONTRACT_AI_HASHING_N_FEATURES", 384)),
+    )
+
+
+def merge_ai_extension_config(
+    base: AIExtensionConfig,
+    *,
+    embedding_drift_threshold: float | None = None,
+    embedding_sample_size: int | None = None,
+    llm_violation_trend_multiplier: float | None = None,
+    llm_violation_trend_min_delta: float | None = None,
+    prompt_preview_max_length: int | None = None,
+    hashing_n_features: int | None = None,
+) -> AIExtensionConfig:
+    """CLI / programmatic overrides (None = keep base)."""
+    kwargs: dict[str, Any] = {}
+    if embedding_drift_threshold is not None:
+        kwargs["embedding_drift_threshold"] = embedding_drift_threshold
+    if embedding_sample_size is not None:
+        kwargs["embedding_sample_size"] = max(1, int(embedding_sample_size))
+    if llm_violation_trend_multiplier is not None:
+        kwargs["llm_violation_trend_multiplier"] = llm_violation_trend_multiplier
+    if llm_violation_trend_min_delta is not None:
+        kwargs["llm_violation_trend_min_delta"] = llm_violation_trend_min_delta
+    if prompt_preview_max_length is not None:
+        kwargs["prompt_preview_max_length"] = max(1, int(prompt_preview_max_length))
+    if hashing_n_features is not None:
+        kwargs["hashing_n_features"] = max(16, int(hashing_n_features))
+    return dataclasses.replace(base, **kwargs)
+
+
+# Optional callbacks for dashboards / APM (no core check logic changes; invoked after metrics are computed).
+MONITORING_HOOKS: list[Callable[[dict[str, Any]], None]] = []
+
+
+def register_ai_monitoring_hook(fn: Callable[[dict[str, Any]], None]) -> None:
+    """Register a sink; receives the same payload written to ai_monitoring_metrics.json."""
+    MONITORING_HOOKS.append(fn)
+
+
+def _emit_ai_monitoring_hooks(payload: dict[str, Any]) -> None:
+    for fn in MONITORING_HOOKS:
+        try:
+            fn(payload)
+        except Exception:
+            continue
+
+
+def build_ai_monitoring_snapshot(
+    *,
+    embedding: dict[str, Any],
+    prompt: dict[str, Any],
+    llm: dict[str, Any],
+    traces: dict[str, Any],
+    config: AIExtensionConfig,
+) -> dict[str, Any]:
+    """
+    Stable, dashboard-friendly metrics (gauges + numeric state codes + text states).
+    Prometheus-style scrapers can map gauges_*; states_numeric are 0=PASS,1=WARN,2=FAIL,3=ERROR,-1=unknown.
+    """
+
+    def _status_code(s: Any) -> float:
+        m = {"PASS": 0.0, "WARN": 1.0, "FAIL": 2.0, "ERROR": 3.0}
+        return float(m.get(str(s).upper(), -1.0))
+
+    return {
+        "schema_version": "1",
+        "kind": "ai_contract_extensions",
+        "timestamp": _now_iso(),
+        "config_echo": {
+            "embedding_drift_threshold": config.embedding_drift_threshold,
+            "embedding_sample_size": config.embedding_sample_size,
+            "llm_violation_trend_multiplier": config.llm_violation_trend_multiplier,
+            "llm_violation_trend_min_delta": config.llm_violation_trend_min_delta,
+            "prompt_preview_max_length": config.prompt_preview_max_length,
+            "hashing_n_features": config.hashing_n_features,
+        },
+        "gauges": {
+            "ai_embedding_drift_score": float(embedding.get("drift_score") or 0.0),
+            "ai_embedding_drift_threshold": float(embedding.get("threshold") or config.embedding_drift_threshold),
+            "ai_llm_violation_rate": float(llm.get("violation_rate") or 0.0),
+            "ai_llm_baseline_violation_rate": float(llm.get("baseline_violation_rate") or 0.0),
+            "ai_llm_schema_violations_total": float(llm.get("schema_violations") or 0),
+            "ai_llm_total_outputs": float(llm.get("total_outputs") or 0),
+            "ai_langsmith_checks_failed": float(traces.get("checks_failed") or 0),
+            "ai_langsmith_total_traces": float(traces.get("total_traces") or 0),
+            "ai_prompt_quarantined_total": float(prompt.get("quarantined_count") or 0),
+        },
+        "states_numeric": {
+            "ai_embedding_drift": _status_code(embedding.get("status")),
+            "ai_llm_output_schema": _status_code(llm.get("status")),
+            "ai_langsmith_traces": _status_code(traces.get("status")),
+            "ai_prompt_input": _status_code(prompt.get("status")),
+        },
+        "states_text": {
+            "ai_embedding_drift": str(embedding.get("status", "")),
+            "ai_llm_output_schema": str(llm.get("status", "")),
+            "ai_langsmith_traces": str(traces.get("status", "")),
+            "ai_prompt_input": str(prompt.get("status", "")),
+            "ai_llm_trend": str(llm.get("trend", "")),
+        },
+    }
+
+
 def _now_iso() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def _ai_monitoring_disabled() -> bool:
+    return os.environ.get("CONTRACT_AI_MONITORING_DISABLE", "").strip().lower() in ("1", "true", "yes")
+
+
+def _resolve_ai_monitoring_output_path(cli_path: Path | None) -> Path:
+    if cli_path is not None:
+        return cli_path.expanduser().resolve()
+    raw = os.environ.get("CONTRACT_AI_MONITORING_OUTPUT_PATH", "").strip()
+    if raw:
+        return Path(raw).expanduser().resolve()
+    return (_REPO / "validation_reports" / "ai_monitoring_metrics.json").resolve()
 
 
 def _load_jsonl(path: Path) -> list[dict[str, Any]]:
@@ -90,7 +264,7 @@ def _append_violation(path: Path, violation: dict[str, Any], *, dedupe: bool = F
         f.write(json.dumps(violation, ensure_ascii=False) + "\n")
 
 
-def _embed_texts_hashing(texts: list[str], n_features: int = 384) -> np.ndarray:
+def _embed_texts_hashing(texts: list[str], n_features: int) -> np.ndarray:
     vec = HashingVectorizer(
         n_features=n_features,
         alternate_sign=False,
@@ -172,7 +346,15 @@ def _embedding_meta_path() -> Path:
     return _REPO / "schema_snapshots" / "embedding_baseline_meta.json"
 
 
-def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 0.15) -> dict[str, Any]:
+def check_embedding_drift(
+    extractions: list[dict[str, Any]],
+    *,
+    config: AIExtensionConfig | None = None,
+    threshold: float | None = None,
+) -> dict[str, Any]:
+    cfg = config or load_ai_extension_config_from_env()
+    eff_threshold = float(threshold) if threshold is not None else cfg.embedding_drift_threshold
+
     texts: list[str] = []
     for r in extractions:
         for f in r.get("extracted_facts") or []:
@@ -180,10 +362,10 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
             if isinstance(t, str) and t.strip():
                 texts.append(t.strip())
     if not texts:
-        return {"drift_score": 0.0, "status": "WARN", "threshold": threshold, "reason": "no texts"}
+        return {"drift_score": 0.0, "status": "WARN", "threshold": eff_threshold, "reason": "no texts"}
 
     rng = np.random.default_rng(42)
-    sample_n = min(200, len(texts))
+    sample_n = min(cfg.embedding_sample_size, len(texts))
     idx = rng.choice(len(texts), size=sample_n, replace=False)
     sample_texts = [texts[i] for i in idx]
 
@@ -215,7 +397,7 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
             return {
                 "drift_score": 0.0,
                 "status": "PASS",
-                "threshold": threshold,
+                "threshold": eff_threshold,
                 "baseline_created": True,
                 "backend": backend_id,
                 "model": model_name,
@@ -228,11 +410,11 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
         cosine_sim = float(np.dot(c64, baseline_centroid))
         drift = 1.0 - cosine_sim
         drift = round(float(drift), 4)
-        status = "FAIL" if drift > threshold else "PASS"
+        status = "FAIL" if drift > eff_threshold else "PASS"
         return {
             "drift_score": drift,
             "status": status,
-            "threshold": threshold,
+            "threshold": eff_threshold,
             "backend": backend_id,
             "model": model_name,
         }
@@ -256,7 +438,7 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
         backend = "hashing"
 
     # HashingVectorizer fallback (offline, deterministic)
-    current = _embed_texts_hashing(sample_texts)
+    current = _embed_texts_hashing(sample_texts, n_features=cfg.hashing_n_features)
     current_centroid = np.mean(current, axis=0)
     current_centroid = current_centroid / (np.linalg.norm(current_centroid) + 1e-9)
 
@@ -268,14 +450,17 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
 
     if not baseline_path.exists():
         np.savez(baseline_path, centroid=current_centroid.astype(np.float64))
-        meta_path.write_text(json.dumps({"backend": "hashing", "model": "HashingVectorizer-384"}), encoding="utf-8")
+        meta_path.write_text(
+            json.dumps({"backend": "hashing", "model": f"HashingVectorizer-{cfg.hashing_n_features}"}),
+            encoding="utf-8",
+        )
         return {
             "drift_score": 0.0,
             "status": "PASS",
-            "threshold": threshold,
+            "threshold": eff_threshold,
             "baseline_created": True,
             "backend": "hashing",
-            "model": "HashingVectorizer-384",
+            "model": f"HashingVectorizer-{cfg.hashing_n_features}",
         }
 
     base = np.load(baseline_path)
@@ -285,17 +470,23 @@ def check_embedding_drift(extractions: list[dict[str, Any]], threshold: float = 
     cosine_sim = float(np.dot(c64, baseline_centroid))
     drift = 1.0 - cosine_sim
     drift = round(float(drift), 4)
-    status = "FAIL" if drift > threshold else "PASS"
+    status = "FAIL" if drift > eff_threshold else "PASS"
     return {
         "drift_score": drift,
         "status": status,
-        "threshold": threshold,
+        "threshold": eff_threshold,
         "backend": "hashing",
-        "model": "HashingVectorizer-384",
+        "model": f"HashingVectorizer-{cfg.hashing_n_features}",
     }
 
 
-def check_prompt_input_schema(extractions: list[dict[str, Any]]) -> dict[str, Any]:
+def check_prompt_input_schema(
+    extractions: list[dict[str, Any]],
+    *,
+    config: AIExtensionConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or load_ai_extension_config_from_env()
+    max_len = cfg.prompt_preview_max_length
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -303,7 +494,7 @@ def check_prompt_input_schema(extractions: list[dict[str, Any]]) -> dict[str, An
         "properties": {
             "doc_id": {"type": "string", "minLength": 1},
             "source_path": {"type": "string", "minLength": 1},
-            "content_preview": {"type": "string", "maxLength": 8000},
+            "content_preview": {"type": "string", "maxLength": max_len},
         },
         "additionalProperties": False,
     }
@@ -317,7 +508,7 @@ def check_prompt_input_schema(extractions: list[dict[str, Any]]) -> dict[str, An
         preview = ""
         if facts and isinstance(facts, list) and isinstance(facts[0], dict):
             preview = str(facts[0].get("text") or "")
-        record = {"doc_id": doc_id, "source_path": source_path, "content_preview": preview[:8000]}
+        record = {"doc_id": doc_id, "source_path": source_path, "content_preview": preview[:max_len]}
 
         try:
             validate(instance=record, schema=schema)
@@ -332,10 +523,16 @@ def check_prompt_input_schema(extractions: list[dict[str, Any]]) -> dict[str, An
         with out.open("w", encoding="utf-8") as f:
             for q in quarantined:
                 f.write(json.dumps(q, ensure_ascii=False) + "\n")
-    return {"quarantined_count": len(quarantined), "status": status}
+    return {
+        "quarantined_count": len(quarantined),
+        "status": status,
+        "content_preview_max_length": max_len,
+    }
 
 
-def _write_prompt_input_schema_file() -> None:
+def _write_prompt_input_schema_file(config: AIExtensionConfig | None = None) -> None:
+    cfg = config or load_ai_extension_config_from_env()
+    max_len = cfg.prompt_preview_max_length
     schema = {
         "$schema": "http://json-schema.org/draft-07/schema#",
         "type": "object",
@@ -343,7 +540,7 @@ def _write_prompt_input_schema_file() -> None:
         "properties": {
             "doc_id": {"type": "string", "minLength": 1},
             "source_path": {"type": "string", "minLength": 1},
-            "content_preview": {"type": "string", "maxLength": 8000},
+            "content_preview": {"type": "string", "maxLength": max_len},
         },
         "additionalProperties": False,
     }
@@ -395,7 +592,12 @@ def _verdict_json_schema() -> dict[str, Any]:
     }
 
 
-def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]:
+def validate_llm_output_schema(
+    verdicts: list[dict[str, Any]],
+    *,
+    config: AIExtensionConfig | None = None,
+) -> dict[str, Any]:
+    cfg = config or load_ai_extension_config_from_env()
     schema = _verdict_json_schema()
     failures: list[dict[str, Any]] = []
 
@@ -416,8 +618,10 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
         baseline_violation_rate = 0.0
         baseline_path.write_text(json.dumps({"baseline_violation_rate": baseline_violation_rate}), encoding="utf-8")
 
+    mult = cfg.llm_violation_trend_multiplier
+    floor = cfg.llm_violation_trend_min_delta
     trend = "stable"
-    if violation_rate > baseline_violation_rate * 1.5 and violation_rate > baseline_violation_rate + 0.001:
+    if violation_rate > baseline_violation_rate * mult and violation_rate > baseline_violation_rate + floor:
         trend = "rising"
     status = "WARN" if trend == "rising" else "PASS"
 
@@ -468,6 +672,8 @@ def validate_llm_output_schema(verdicts: list[dict[str, Any]]) -> dict[str, Any]
         "trend": trend,
         "status": status,
         "failures_sample": failures[:5],
+        "trend_threshold_multiplier": mult,
+        "trend_min_delta": floor,
     }
 
 
@@ -531,6 +737,48 @@ def main() -> None:
         action="store_true",
         help="Also write validation_reports/ai_extensions.json (duplicate of metrics for rubric filenames).",
     )
+    parser.add_argument(
+        "--embedding-drift-threshold",
+        type=float,
+        default=None,
+        help="Override CONTRACT_AI_EMBEDDING_DRIFT_THRESHOLD.",
+    )
+    parser.add_argument(
+        "--embedding-sample-size",
+        type=int,
+        default=None,
+        help="Override CONTRACT_AI_EMBEDDING_SAMPLE_SIZE.",
+    )
+    parser.add_argument(
+        "--llm-trend-multiplier",
+        type=float,
+        default=None,
+        help="Override CONTRACT_AI_LLM_VIOLATION_TREND_MULTIPLIER.",
+    )
+    parser.add_argument(
+        "--llm-trend-min-delta",
+        type=float,
+        default=None,
+        help="Override CONTRACT_AI_LLM_VIOLATION_TREND_MIN_DELTA.",
+    )
+    parser.add_argument(
+        "--prompt-preview-max-length",
+        type=int,
+        default=None,
+        help="Override CONTRACT_AI_PROMPT_PREVIEW_MAX_LENGTH.",
+    )
+    parser.add_argument(
+        "--hashing-n-features",
+        type=int,
+        default=None,
+        help="Override CONTRACT_AI_HASHING_N_FEATURES (hashing backend only).",
+    )
+    parser.add_argument(
+        "--monitoring-output",
+        type=Path,
+        default=None,
+        help="Write dashboard metrics JSON (default: validation_reports/ai_monitoring_metrics.json or CONTRACT_AI_MONITORING_OUTPUT_PATH).",
+    )
     args = parser.parse_args()
 
     extractions_path = (args.extractions or _REPO / "outputs" / "week3" / "extractions.jsonl").expanduser().resolve()
@@ -541,9 +789,20 @@ def main() -> None:
     verdicts = _load_jsonl(verdicts_path)
     traces = _load_jsonl(traces_path) if traces_path.exists() else []
 
-    _write_prompt_input_schema_file()
+    base_cfg = load_ai_extension_config_from_env()
+    cfg = merge_ai_extension_config(
+        base_cfg,
+        embedding_drift_threshold=args.embedding_drift_threshold,
+        embedding_sample_size=args.embedding_sample_size,
+        llm_violation_trend_multiplier=args.llm_trend_multiplier,
+        llm_violation_trend_min_delta=args.llm_trend_min_delta,
+        prompt_preview_max_length=args.prompt_preview_max_length,
+        hashing_n_features=args.hashing_n_features,
+    )
 
-    embedding = check_embedding_drift(extractions)
+    _write_prompt_input_schema_file(cfg)
+
+    embedding = check_embedding_drift(extractions, config=cfg)
     vlog_main = _REPO / "violation_log" / "violations.jsonl"
     if embedding.get("status") == "FAIL":
         _append_violation(
@@ -564,8 +823,8 @@ def main() -> None:
             },
             dedupe=True,
         )
-    prompt = check_prompt_input_schema(extractions)
-    llm = validate_llm_output_schema(verdicts)
+    prompt = check_prompt_input_schema(extractions, config=cfg)
+    llm = validate_llm_output_schema(verdicts, config=cfg)
     traces_report = check_langsmith_traces(traces)
 
     metrics = {
@@ -581,6 +840,14 @@ def main() -> None:
         "baseline_violation_rate": llm["baseline_violation_rate"],
         "status": llm["status"],
         "timestamp": _now_iso(),
+        "ai_extension_config": {
+            "embedding_drift_threshold": cfg.embedding_drift_threshold,
+            "embedding_sample_size": cfg.embedding_sample_size,
+            "llm_violation_trend_multiplier": cfg.llm_violation_trend_multiplier,
+            "llm_violation_trend_min_delta": cfg.llm_violation_trend_min_delta,
+            "prompt_preview_max_length": cfg.prompt_preview_max_length,
+            "hashing_n_features": cfg.hashing_n_features,
+        },
     }
 
     out = (args.output or _REPO / "validation_reports" / "ai_metrics.json").expanduser().resolve()
@@ -592,6 +859,20 @@ def main() -> None:
         alt = _REPO / "validation_reports" / "ai_extensions.json"
         alt.write_text(payload, encoding="utf-8")
         print(f"Wrote {alt}")
+
+    if not _ai_monitoring_disabled():
+        monitoring = build_ai_monitoring_snapshot(
+            embedding=embedding,
+            prompt=prompt,
+            llm=llm,
+            traces=traces_report,
+            config=cfg,
+        )
+        mon_path = _resolve_ai_monitoring_output_path(args.monitoring_output)
+        mon_path.parent.mkdir(parents=True, exist_ok=True)
+        mon_path.write_text(json.dumps(monitoring, indent=2), encoding="utf-8")
+        print(f"Wrote {mon_path}")
+        _emit_ai_monitoring_hooks(monitoring)
 
 
 if __name__ == "__main__":

@@ -40,13 +40,14 @@ def _check_id_tail(check_id: str) -> str:
     """Strip common week/cross prefixes so we can match breaking field paths."""
     s = check_id.strip()
     for prefix in (
+        "cross.ingest.",
+        "cross.week2.",
+        "cross.week4.",
         "week1.",
         "week2.",
         "week3.",
         "week4.",
         "week5.",
-        "cross.week2.",
-        "cross.week4.",
         "langsmith.",
     ):
         if s.startswith(prefix):
@@ -61,6 +62,11 @@ def breaking_field_matches_check(breaking_field: str, check_id: str) -> bool:
     bf = breaking_field.strip()
     if not bf:
         return False
+    cid = check_id.strip()
+    if bf == "runner.schema.required" and cid.startswith("runner.schema.required."):
+        return True
+    if bf == "cross.ingest" and cid.startswith("cross.ingest."):
+        return True
     tail = _check_id_tail(check_id)
     if tail == bf or tail.startswith(bf + "."):
         return True
@@ -104,15 +110,16 @@ def discovered_contract_ids(root: Path) -> set[str]:
     """Contract `id` values from generated_contracts/*.yaml (after generator run)."""
     out: set[str] = set()
     gdir = root / "generated_contracts"
-    if not gdir.is_dir():
-        return out
-    for p in gdir.glob("*.yaml"):
-        try:
-            data = yaml.safe_load(p.read_text(encoding="utf-8"))
-        except Exception:
-            continue
-        if isinstance(data, dict) and data.get("id"):
-            out.add(str(data["id"]))
+    if gdir.is_dir():
+        for p in gdir.glob("*.yaml"):
+            try:
+                data = yaml.safe_load(p.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            if isinstance(data, dict) and data.get("id"):
+                out.add(str(data["id"]))
+    # Synthetic id from ValidationRunner.run_cross_system_validation (not a generated Bitol file).
+    out.add("cross-system-dependencies")
     return out
 
 

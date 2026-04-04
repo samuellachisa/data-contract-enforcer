@@ -355,3 +355,4 @@ GitHub Actions (`.github/workflows/ci.yml`) runs contract generation, Validation
 
 - **`REPORT.md`** — End-to-end narrative, validation evidence, schema evolution case study, and rubric-oriented sections.
 - **`DOMAIN_NOTES.md`** — Backward-compatibility taxonomy, Bitol examples, lineage blame discussion, and production-oriented failure modes.
+- **`contracts/ATTRIBUTION_OPERATIONS.md`** — Git and lineage assumptions, monorepo / `CONTRACT_ENFORCER_GIT_TOPLEVEL`, lineage freshness env vars, and output fields (`attribution_context`).

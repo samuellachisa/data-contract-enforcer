@@ -11,6 +11,8 @@ from __future__ import annotations
 import argparse
 import glob
 import json
+import os
+import math
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -19,12 +21,37 @@ import yaml
 
 _REPO = Path(__file__).resolve().parents[1]
 
+from contracts.common import load_repo_dotenv
+
+load_repo_dotenv()
+
 # Practitioner manual — severity deductions across all validation_reports/*.json with a `results` array.
 SEVERITY_DEDUCTIONS_MANUAL = {"CRITICAL": 20, "HIGH": 10, "MEDIUM": 5, "LOW": 1, "WARNING": 1}
+
+# Multipliers applied to the severity deduction for each failing check_id (longest matching prefix wins).
+DEFAULT_HEALTH_TYPE_WEIGHTS: dict[str, float] = {
+    "week3.": 1.0,
+    "week5.": 1.0,
+    "week4.": 1.0,
+    "langsmith.": 1.0,
+    "week2.": 1.0,
+    "cross.": 1.0,
+    "default": 1.0,
+}
 
 
 def _now_date() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
+
+
+def _env_int(key: str, default: int) -> int:
+    raw = os.environ.get(key, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw, 10)
+    except ValueError:
+        return default
 
 
 def _load_latest_json_with_path(path_glob: str) -> tuple[dict[str, Any] | None, str | None]:
@@ -32,7 +59,11 @@ def _load_latest_json_with_path(path_glob: str) -> tuple[dict[str, Any] | None, 
     if not matches:
         return None, None
     p = Path(matches[-1])
-    return json.loads(p.read_text(encoding="utf-8")), str(p.resolve())
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return None, str(p.resolve())
+    return data if isinstance(data, dict) else None, str(p.resolve())
 
 
 def _load_json_explicit_or_glob(
@@ -42,13 +73,102 @@ def _load_json_explicit_or_glob(
         p = explicit.expanduser().resolve()
         if not p.is_file():
             return None, str(p)
-        return json.loads(p.read_text(encoding="utf-8")), str(p)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return None, str(p)
+        return data if isinstance(data, dict) else None, str(p)
     return _load_latest_json_with_path(path_glob)
 
 
 def _severity_rank(sev: str) -> int:
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "WARNING": 4}
     return order.get(sev, 99)
+
+
+def _type_weight_for_check_id(check_id: str, weights: dict[str, float]) -> float:
+    """Return the multiplier for the longest matching prefix (excluding key 'default')."""
+    cid = str(check_id)
+    default = float(weights.get("default", 1.0))
+    best_len = -1
+    best_w = default
+    for prefix, w in weights.items():
+        if prefix == "default":
+            continue
+        if cid.startswith(prefix) and len(prefix) > best_len:
+            try:
+                best_w = float(w)
+            except (TypeError, ValueError):
+                best_w = default
+            best_len = len(prefix)
+    return best_w
+
+
+def _merge_float_weight_dict(base: dict[str, float], overlay: dict[str, Any]) -> dict[str, float]:
+    out = dict(base)
+    for k, v in overlay.items():
+        if isinstance(k, str) and isinstance(v, (int, float)) and not isinstance(v, bool):
+            out[k] = float(v)
+    return out
+
+
+def resolve_health_type_weights(
+    *,
+    explicit: dict[str, float] | None = None,
+    weights_file: Path | None = None,
+    repo: Path | None = None,
+) -> dict[str, float]:
+    """
+    Merge defaults < optional enforcer_report/health_type_weights.json < env
+    CONTRACT_REPORT_HEALTH_TYPE_WEIGHTS (JSON object) < explicit kwargs.
+    """
+    root = repo or _REPO
+    merged = dict(DEFAULT_HEALTH_TYPE_WEIGHTS)
+
+    file_to_load: Path | None = None
+    if weights_file is not None:
+        file_to_load = weights_file.expanduser().resolve()
+    else:
+        candidate = root / "enforcer_report" / "health_type_weights.json"
+        if candidate.is_file():
+            file_to_load = candidate
+
+    if file_to_load is not None and file_to_load.is_file():
+        try:
+            data = json.loads(file_to_load.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                merged = _merge_float_weight_dict(merged, data)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    raw = os.environ.get("CONTRACT_REPORT_HEALTH_TYPE_WEIGHTS", "").strip()
+    if raw:
+        try:
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                merged = _merge_float_weight_dict(merged, data)
+        except json.JSONDecodeError:
+            pass
+
+    if explicit:
+        merged = _merge_float_weight_dict(merged, explicit)
+
+    merged.setdefault("default", 1.0)
+    return merged
+
+
+def _violation_row_sort_key(r: dict[str, Any]) -> tuple[int, int, str, str]:
+    rf = r.get("records_failing", 0)
+    try:
+        n = int(rf)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        n = 0
+    return (
+        _severity_rank(str(r.get("severity", "LOW"))),
+        -n,
+        str(r.get("check_id", "")),
+        str(r.get("field", "")),
+    )
 
 
 def _iter_structured_validation_reports(root: Path) -> list[Path]:
@@ -70,12 +190,18 @@ def _iter_structured_validation_reports(root: Path) -> list[Path]:
     return out
 
 
-def _manual_health_score_and_fails(root: Path) -> tuple[float, list[dict[str, Any]]]:
+def _manual_health_score_and_fails(
+    root: Path, *, type_weights: dict[str, float]
+) -> tuple[float, list[dict[str, Any]], dict[str, Any]]:
     """Dedupe failing checks by check_id so duplicate report files do not multiply deductions."""
     best_fail_per_check: dict[str, dict[str, Any]] = {}
     for p in _iter_structured_validation_reports(root):
         data = json.loads(p.read_text(encoding="utf-8"))
-        for r in data.get("results", []) or []:
+        raw = data.get("results", []) if isinstance(data, dict) else []
+        rows = raw if isinstance(raw, list) else []
+        for r in rows:
+            if not isinstance(r, dict):
+                continue
             if str(r.get("status")) not in {"FAIL", "ERROR"}:
                 continue
             row = dict(r)
@@ -87,9 +213,30 @@ def _manual_health_score_and_fails(root: Path) -> tuple[float, list[dict[str, An
                 best_fail_per_check[cid] = row
     all_fails = list(best_fail_per_check.values())
     score = 100.0
+    breakdown_rows: list[dict[str, Any]] = []
     for f in all_fails:
-        score -= float(SEVERITY_DEDUCTIONS_MANUAL.get(str(f.get("severity", "LOW")), 1))
-    return max(0.0, min(100.0, round(score, 2))), all_fails
+        sev = str(f.get("severity", "LOW"))
+        base = float(SEVERITY_DEDUCTIONS_MANUAL.get(sev, 1))
+        cid = str(f.get("check_id", ""))
+        tw = _type_weight_for_check_id(cid, type_weights)
+        ded = base * tw
+        score -= ded
+        breakdown_rows.append(
+            {
+                "check_id": cid,
+                "severity": sev,
+                "base_deduction": round(base, 4),
+                "type_weight": round(tw, 4),
+                "applied_deduction": round(ded, 4),
+            }
+        )
+    final = max(0.0, min(100.0, round(score, 2)))
+    breakdown: dict[str, Any] = {
+        "severity_deductions_table": dict(SEVERITY_DEDUCTIONS_MANUAL),
+        "type_weights_effective": type_weights,
+        "per_failing_check": breakdown_rows,
+    }
+    return final, all_fails, breakdown
 
 
 def _plain_language_failure(
@@ -169,27 +316,6 @@ def _registry_subscriber_impact(violations: list[dict[str, Any]]) -> dict[str, A
     }
 
 
-def _top_violations_from_validation(week3: dict[str, Any] | None, week5: dict[str, Any] | None) -> list[dict[str, Any]]:
-    items: list[dict[str, Any]] = []
-    for report, system in [(week3, "week3-document-refinery"), (week5, "week5-event-sourcing")]:
-        if not report:
-            continue
-        for r in report.get("results", []):
-            if r.get("status") in {"FAIL", "ERROR"}:
-                items.append(
-                    {
-                        "check_id": r.get("check_id"),
-                        "system": system,
-                        "field": r.get("column_name"),
-                        "severity": r.get("severity"),
-                        "records_failing": r.get("records_failing"),
-                        "message": r.get("message"),
-                    }
-                )
-    items.sort(key=lambda x: _severity_rank(str(x.get("severity"))))
-    return items[:3]
-
-
 def _normalize_violation_row(item: dict[str, Any]) -> dict[str, Any]:
     """Uniform keys for dedupe, sorting, and _describe_violation."""
     row = dict(item)
@@ -200,7 +326,77 @@ def _normalize_violation_row(item: dict[str, Any]) -> dict[str, Any]:
     row.setdefault("message", "")
     row.setdefault("check_id", "")
     row.setdefault("severity", "LOW")
+    if "records_failing" not in row:
+        row["records_failing"] = 0
     return row
+
+
+def _build_prioritized_violation_rows(
+    violations: list[dict[str, Any]],
+    manual_fail_rows: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Merge JSONL violations with deduped validation FAIL rows; sort by severity then impact (records_failing)."""
+    candidates: list[dict[str, Any]] = []
+
+    for v in violations:
+        if not isinstance(v, dict):
+            continue
+        if v.get("type") == "llm_output_schema":
+            candidates.append(
+                _normalize_violation_row(
+                    {
+                        "check_id": v.get("check_id"),
+                        "severity": "CRITICAL",
+                        "type": "llm_output_schema",
+                        "message": v.get("message", ""),
+                        "field": "verdict_record",
+                        "records_failing": v.get("records_failing", 0),
+                    }
+                )
+            )
+        elif v.get("check_id"):
+            bh = v.get("blame_hint")
+            field_guess = ""
+            if isinstance(bh, dict):
+                field_guess = str(bh.get("file") or "")
+            candidates.append(
+                _normalize_violation_row(
+                    {
+                        "check_id": v.get("check_id"),
+                        "severity": v.get("severity", "MEDIUM"),
+                        "type": v.get("type", "contract_violation"),
+                        "message": v.get("message", ""),
+                        "field": field_guess or None,
+                        "records_failing": v.get("records_failing", 0),
+                    }
+                )
+            )
+
+    for r in manual_fail_rows:
+        if not isinstance(r, dict):
+            continue
+        candidates.append(
+            _normalize_violation_row(
+                {
+                    "check_id": r.get("check_id"),
+                    "severity": r.get("severity", "HIGH"),
+                    "field": r.get("column_name", ""),
+                    "message": r.get("message", ""),
+                    "records_failing": r.get("records_failing", 0),
+                }
+            )
+        )
+
+    candidates.sort(key=_violation_row_sort_key)
+    prioritized: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for item in candidates:
+        key = str(item.get("check_id", "")) + "::" + str(item.get("field", ""))
+        if key in seen:
+            continue
+        seen.add(key)
+        prioritized.append(item)
+    return prioritized
 
 
 def _parse_migration_report_payload(data: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
@@ -422,6 +618,10 @@ def generate_report(
     violations_path: Path | None = None,
     migration_report: Path | None = None,
     strict_pdf: bool = False,
+    violations_page: int = 0,
+    violations_page_size: int = 3,
+    health_type_weights: dict[str, float] | None = None,
+    health_weights_file: Path | None = None,
 ) -> dict[str, Any]:
     week3, w3_src = _load_json_explicit_or_glob(
         week3_report, str(_REPO / "validation_reports" / "week3_*.json")
@@ -431,6 +631,12 @@ def generate_report(
     )
 
     violations, viol_src = _load_violations_with_blame(violations_path)
+
+    type_weights = resolve_health_type_weights(
+        explicit=health_type_weights,
+        weights_file=health_weights_file,
+        repo=_REPO,
+    )
 
     mig_bullets, mig_summary, mig_src = _load_migration_schema_section(migration_report, _REPO)
 
@@ -478,11 +684,16 @@ def generate_report(
             continue
         total_checks += int(rep.get("total_checks", 0))
         checks_passed += int(rep.get("passed", 0))
-        for r in rep.get("results", []):
+        raw_results = rep.get("results", [])
+        if not isinstance(raw_results, list):
+            raw_results = []
+        for r in raw_results:
+            if not isinstance(r, dict):
+                continue
             if str(r.get("status")) in {"FAIL", "ERROR"} and str(r.get("severity")) == "CRITICAL":
                 critical_failures += 1
 
-    manual_score, manual_fail_rows = _manual_health_score_and_fails(_REPO)
+    manual_score, manual_fail_rows, health_breakdown = _manual_health_score_and_fails(_REPO, type_weights=type_weights)
     score = manual_score
     critical_failures = sum(
         1 for r in manual_fail_rows if str(r.get("severity")) == "CRITICAL"
@@ -497,38 +708,15 @@ def generate_report(
         "MEDIUM": sum(1 for r in manual_fail_rows if str(r.get("severity")) == "MEDIUM"),
     }
 
-    top_violations = _top_violations_from_validation(week3, week5)
-    violations_this_week = []
-    for v in violations:
-        if v.get("type") == "llm_output_schema":
-            violations_this_week.append(
-                _normalize_violation_row(
-                    {
-                        "check_id": v.get("check_id"),
-                        "severity": "CRITICAL",
-                        "type": "llm_output_schema",
-                        "message": v.get("message", ""),
-                        "field": "verdict_record",
-                    }
-                )
-            )
-    for tv in top_violations:
-        violations_this_week.append(_normalize_violation_row(tv))
-    # De-dup + pick 3 by severity
-    violations_this_week.sort(key=lambda x: _severity_rank(str(x.get("severity", "LOW"))))
-    violations_this_week_final = []
-    seen = set()
-    for item in violations_this_week:
-        key = str(item.get("check_id")) + "::" + str(item.get("field", ""))
-        if key in seen:
-            continue
-        seen.add(key)
-        violations_this_week_final.append(item)
-        if len(violations_this_week_final) >= 3:
-            break
+    violations_prioritized = _build_prioritized_violation_rows(violations, manual_fail_rows)
+    page = max(0, int(violations_page))
+    page_size = max(1, int(violations_page_size))
+    start = page * page_size
+    violations_this_week_final = violations_prioritized[start : start + page_size]
 
-    if not violations_this_week_final and top_plain:
-        for r in top_plain[:3]:
+    if not violations_prioritized and top_plain:
+        violations_this_week_final = []
+        for r in top_plain[:page_size]:
             violations_this_week_final.append(
                 _normalize_violation_row(
                     {
@@ -536,9 +724,25 @@ def generate_report(
                         "severity": r.get("severity", "HIGH"),
                         "field": r.get("column_name", ""),
                         "message": r.get("message", ""),
+                        "records_failing": r.get("records_failing", 0),
                     }
                 )
             )
+        total_v = len(top_plain)
+        total_pages = 1
+        page = 0
+    else:
+        total_v = len(violations_prioritized)
+        total_pages = max(1, math.ceil(total_v / page_size)) if total_v else 1
+
+    violations_pagination: dict[str, Any] = {
+        "page": page,
+        "page_size": page_size,
+        "total_violations": total_v,
+        "total_pages": total_pages,
+        "returned_count": len(violations_this_week_final),
+        "sort": "severity_then_records_failing_then_check_id",
+    }
 
     schema_changes = mig_bullets if mig_bullets else _schema_diff_breaking_summary()
 
@@ -570,9 +774,14 @@ def generate_report(
             else f"{critical_failures} critical issue(s) require immediate action."
         )
     )
+    weight_note = (
+        "severity- and type-weighted deductions "
+        if any(float(v) != 1.0 for k, v in type_weights.items() if k != "default")
+        else "severity-weighted deductions "
+    )
     exec_summary = (
         f"This run aggregated {total_checks} contract checks across the selected Week 3 and Week 5 reports "
-        f"({pass_rate}% PASS on those two). Data health score is {score}/100 using severity-weighted deductions "
+        f"({pass_rate}% PASS on those two). Data health score is {score}/100 using {weight_note}"
         f"over all structured validation JSON in validation_reports/ ({n_fail_all} failing check rows). "
         "Review violations, schema drift, and AI metrics for prioritized fixes."
     )
@@ -588,6 +797,7 @@ def generate_report(
         "executive_summary": exec_summary,
         "registry_subscriber_impact": registry_impact,
         "data_health_score": score,
+        "data_health_score_breakdown": health_breakdown,
         "n_critical_contract_violations": critical_failures,
         "data_health_narrative": health_narrative,
         "top_violations_plain_language": top_violations_plain,
@@ -597,12 +807,14 @@ def generate_report(
             "output_violation_rate": ai_metrics.get("violation_rate", "N/A"),
             "status": ai_metrics.get("status", "UNKNOWN"),
         },
+        "violations_pagination": violations_pagination,
         "violations_this_week": [
             {
                 "severity": v.get("severity"),
                 "description": _describe_violation(v),
                 "check_id": v.get("check_id"),
                 "field": v.get("field"),
+                "records_failing": v.get("records_failing", 0),
             }
             for v in violations_this_week_final
         ],
@@ -665,7 +877,15 @@ def generate_report(
         pdf.multi_cell(w, 6, _pdf_sanitize(exec_summary))
         pdf.ln(1)
         pdf.set_x(pdf.l_margin)
-        pdf.multi_cell(w, 7, _pdf_sanitize("Violations (top 3):"))
+        pag = report_data.get("violations_pagination") or {}
+        pdf.multi_cell(
+            w,
+            7,
+            _pdf_sanitize(
+                f"Violations (page {int(pag.get('page', 0)) + 1} of {pag.get('total_pages', 1)}, "
+                f"{pag.get('returned_count', 0)} of {pag.get('total_violations', 0)} shown):"
+            ),
+        )
         for v in report_data["violations_this_week"]:
             pdf.set_x(pdf.l_margin)
             pdf.multi_cell(w, 6, _pdf_sanitize(f"- {v.get('severity')}: {v.get('description')}"))
@@ -732,7 +952,31 @@ def main() -> None:
         action="store_true",
         help="Exit with code 1 if PDF generation fails (default: tolerate PDF errors).",
     )
+    parser.add_argument(
+        "--violations-page",
+        type=int,
+        default=None,
+        help="0-based page index for violations_this_week (default: env CONTRACT_REPORT_VIOLATIONS_PAGE or 0).",
+    )
+    parser.add_argument(
+        "--violations-page-size",
+        type=int,
+        default=None,
+        help="Prioritized violations per page (default: env CONTRACT_REPORT_VIOLATIONS_PAGE_SIZE or 3).",
+    )
+    parser.add_argument(
+        "--health-weights-file",
+        type=Path,
+        default=None,
+        help="JSON object of check_id prefix -> multiplier (merged with defaults and env).",
+    )
     args = parser.parse_args()
+    v_page = args.violations_page if args.violations_page is not None else _env_int("CONTRACT_REPORT_VIOLATIONS_PAGE", 0)
+    v_size = (
+        args.violations_page_size
+        if args.violations_page_size is not None
+        else _env_int("CONTRACT_REPORT_VIOLATIONS_PAGE_SIZE", 3)
+    )
     generate_report(
         week3_report=args.week3_report,
         week5_report=args.week5_report,
@@ -740,6 +984,9 @@ def main() -> None:
         violations_path=args.violations,
         migration_report=args.migration_report,
         strict_pdf=args.strict_pdf,
+        violations_page=v_page,
+        violations_page_size=v_size,
+        health_weights_file=args.health_weights_file,
     )
 
 

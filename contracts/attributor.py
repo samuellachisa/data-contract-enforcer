@@ -5,15 +5,18 @@ ViolationAttributor (Week 7).
 Reads violation_log/violations.jsonl and enriches each violation with:
 - blame_chain (ranked candidates, commit hash, author, timestamp, confidence_score)
 - blast_radius (affected_nodes/pipelines + estimated_records)
+- attribution_context (git work tree, lineage freshness warnings; see ATTRIBUTION_OPERATIONS.md)
+
+Operational assumptions and monorepo notes: ``contracts/ATTRIBUTION_OPERATIONS.md``.
 """
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 import uuid
-from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
@@ -52,12 +55,13 @@ def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
             yield json.loads(line)
 
 
-def _load_latest_lineage(root: Path, lineage_jsonl: Path | None = None) -> dict[str, Any] | None:
-    p = lineage_jsonl if lineage_jsonl is not None else root / "outputs" / "week4" / "lineage_snapshots.jsonl"
+def _load_latest_lineage(root: Path, lineage_jsonl: Path | None = None) -> tuple[dict[str, Any] | None, Path | None]:
+    """Last JSONL object is treated as the active snapshot (document freshness there, not file mtime)."""
+    p = (lineage_jsonl.expanduser().resolve() if lineage_jsonl is not None else (root / "outputs" / "week4" / "lineage_snapshots.jsonl").resolve())
     if not p.exists():
-        return None
+        return None, None
     rows = list(_iter_jsonl(p))
-    return rows[-1] if rows else None
+    return (rows[-1] if rows else None), p
 
 
 def violations_from_validation_report(report_path: Path) -> list[dict[str, Any]]:
@@ -66,7 +70,12 @@ def violations_from_validation_report(report_path: Path) -> list[dict[str, Any]]
     contract_id = str(data.get("contract_id") or "")
     ts = str(data.get("run_timestamp") or _now_iso())
     out: list[dict[str, Any]] = []
-    for r in data.get("results", []) or []:
+    raw_results = data.get("results", [])
+    if not isinstance(raw_results, list):
+        return out
+    for r in raw_results:
+        if not isinstance(r, dict):
+            continue
         if str(r.get("status")) not in {"FAIL", "ERROR"}:
             continue
         out.append(
@@ -283,7 +292,136 @@ def _default_blame_line_range(check_id: str) -> tuple[int, int]:
     return 1, 80
 
 
-def _git_blame_commit_hash(repo: Path, rel_path: str, line_start: int, line_end: int) -> str | None:
+def _git_work_tree_root(project_root: Path) -> Path:
+    """
+    Git commands must run with cwd at the repository root. In monorepos, ``project_root``
+    may be a package subdirectory; ``git rev-parse --show-toplevel`` discovers the root.
+
+    Override: set ``CONTRACT_ENFORCER_GIT_TOPLEVEL`` to an absolute path when auto-detection
+    is wrong (sparse checkouts, nested clones, or unconventional layouts).
+    """
+    override = os.environ.get("CONTRACT_ENFORCER_GIT_TOPLEVEL", "").strip()
+    if override:
+        p = Path(override).expanduser().resolve()
+        if p.is_dir():
+            return p
+    pr = project_root.resolve()
+    import subprocess
+
+    try:
+        out = subprocess.check_output(
+            ["git", "rev-parse", "--show-toplevel"],
+            cwd=str(pr),
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if out:
+            return Path(out).resolve()
+    except (subprocess.CalledProcessError, FileNotFoundError, OSError):
+        pass
+    return pr
+
+
+def _relative_path_for_git(git_root: Path, file_path: Path) -> str | None:
+    """Path as git expects (posix, relative to work tree), or None if outside the tree."""
+    try:
+        abs_f = file_path.resolve()
+        abs_g = git_root.resolve()
+        rel = abs_f.relative_to(abs_g)
+        return rel.as_posix()
+    except (ValueError, OSError):
+        return None
+
+
+def _normalize_graph_path(rel: str) -> str:
+    """Normalize lineage / node path strings (strip ``file::``, unify slashes)."""
+    s = (rel or "").strip().replace("\\", "/")
+    if s.startswith("file::"):
+        s = s[6:].lstrip("/")
+    return s
+
+
+def _path_from_file_node(file_node_id: str, metadata: dict[str, Any]) -> str:
+    """Prefer explicit metadata path; fall back to ``file::relative/path`` node id convention."""
+    meta = metadata or {}
+    p = str(meta.get("path") or meta.get("file_path") or "").strip()
+    if p:
+        return _normalize_graph_path(p)
+    return _normalize_graph_path(file_node_id)
+
+
+def _parse_lineage_captured_at(value: Any) -> datetime | None:
+    if not isinstance(value, str):
+        return None
+    s = value.strip()
+    if not s:
+        return None
+    try:
+        if s.endswith("Z"):
+            s = s[:-1] + "+00:00"
+        dt = datetime.fromisoformat(s)
+        if dt.tzinfo is None:
+            dt = dt.replace(tzinfo=timezone.utc)
+        return dt.astimezone(timezone.utc)
+    except Exception:
+        return None
+
+
+def _build_attribution_context(
+    lineage: dict[str, Any] | None,
+    lineage_source: Path | None,
+    project_root: Path,
+) -> dict[str, Any]:
+    """
+    Shared per-run metadata: where git thinks the repo root is, and lineage freshness hints.
+    ``CONTRACT_ATTRIBUTOR_LINEAGE_MAX_AGE_DAYS`` (default 14): warn when ``captured_at`` is older; set to 0 to disable.
+    """
+    git_root = _git_work_tree_root(project_root)
+    raw_age = os.environ.get("CONTRACT_ATTRIBUTOR_LINEAGE_MAX_AGE_DAYS", "14").strip()
+    try:
+        max_age_days = int(raw_age) if raw_age else 14
+    except ValueError:
+        max_age_days = 14
+
+    snap: dict[str, Any] = {
+        "snapshot_path": str(lineage_source.resolve()) if lineage_source and lineage_source.exists() else None,
+        "captured_at": None,
+        "git_commit": None,
+        "warnings": [],
+    }
+    if not lineage:
+        snap["warnings"].append("no_lineage_snapshot_loaded_upstream_traversal_may_use_static_fallbacks")
+        return {
+            "git_work_tree": str(git_root),
+            "project_root": str(project_root.resolve()),
+            "lineage_snapshot": snap,
+        }
+
+    snap["captured_at"] = lineage.get("captured_at")
+    gc = lineage.get("git_commit")
+    snap["git_commit"] = gc if isinstance(gc, str) else None
+
+    if max_age_days > 0:
+        dt = _parse_lineage_captured_at(snap["captured_at"])
+        if snap["captured_at"] and dt is None:
+            snap["warnings"].append("lineage_captured_at_unparseable_freshness_unknown")
+        elif not snap["captured_at"]:
+            snap["warnings"].append("lineage_captured_at_missing_freshness_not_validated")
+        elif dt is not None:
+            age_days = (datetime.now(timezone.utc) - dt).total_seconds() / 86400.0
+            if age_days > float(max_age_days):
+                snap["warnings"].append(
+                    f"lineage_snapshot_older_than_{max_age_days}_days_recommend_refreshing_week4_export"
+                )
+
+    return {
+        "git_work_tree": str(git_root),
+        "project_root": str(project_root.resolve()),
+        "lineage_snapshot": snap,
+    }
+
+
+def _git_blame_commit_hash(git_root: Path, rel_path: str, line_start: int, line_end: int) -> str | None:
     import subprocess
 
     if not _git_available():
@@ -291,7 +429,7 @@ def _git_blame_commit_hash(repo: Path, rel_path: str, line_start: int, line_end:
     try:
         out = subprocess.check_output(
             ["git", "blame", "-L", f"{line_start},{line_end}", "-t", "--", rel_path],
-            cwd=str(repo),
+            cwd=str(git_root),
             stderr=subprocess.DEVNULL,
             text=True,
         )
@@ -310,13 +448,13 @@ def _git_blame_commit_hash(repo: Path, rel_path: str, line_start: int, line_end:
     return max(set(hashes), key=lambda x: hashes.count(x))
 
 
-def _git_show_commit(repo: Path, commit_hash: str) -> dict[str, str]:
+def _git_show_commit(git_root: Path, commit_hash: str) -> dict[str, str]:
     import subprocess
 
     try:
         out = subprocess.check_output(
             ["git", "show", "-s", "--format=%H|%an|%ai|%s", commit_hash],
-            cwd=str(repo),
+            cwd=str(git_root),
             stderr=subprocess.DEVNULL,
             text=True,
         ).strip()
@@ -332,15 +470,24 @@ def _git_show_commit(repo: Path, commit_hash: str) -> dict[str, str]:
 
 
 def _merge_blame_into_commit(
-    repo: Path, rel_path: str, check_id: str, hint: dict[str, Any] | None, base: dict[str, str | float]
+    project_root: Path,
+    rel_path: str,
+    check_id: str,
+    hint: dict[str, Any] | None,
+    base: dict[str, str | float],
 ) -> dict[str, str | float]:
     hint = hint or {}
     ls = int(hint["line_start"]) if hint.get("line_start") is not None else _default_blame_line_range(check_id)[0]
     le = int(hint["line_end"]) if hint.get("line_end") is not None else _default_blame_line_range(check_id)[1]
-    bh = _git_blame_commit_hash(repo, rel_path, ls, le)
+    git_root = _git_work_tree_root(project_root)
+    abs_file = (project_root / rel_path).resolve()
+    git_rel = _relative_path_for_git(git_root, abs_file)
+    if not git_rel:
+        return base
+    bh = _git_blame_commit_hash(git_root, git_rel, ls, le)
     if not bh:
         return base
-    details = _git_show_commit(repo, bh)
+    details = _git_show_commit(git_root, bh)
     if not details:
         return base
     ts = _git_date_to_iso8601(str(details["commit_timestamp"]))
@@ -381,10 +528,12 @@ def _git_available() -> bool:
         return False
 
 
-def _commit_for_file(file_path: Path) -> dict[str, str | float]:
+def _commit_for_file(file_path: Path, *, project_root: Path | None = None) -> dict[str, str | float]:
     """
     Try git log for last 14 days; if git is unavailable, return synthetic commit data.
+    Uses the true git work tree (monorepo-safe) and paths relative to that root.
     """
+    root = project_root if project_root is not None else _REPO
     if not _git_available():
         return {
             "commit_hash": "0" * 40,
@@ -396,7 +545,17 @@ def _commit_for_file(file_path: Path) -> dict[str, str | float]:
 
     import subprocess
 
-    rel = str(file_path).replace("\\", "/")
+    git_root = _git_work_tree_root(root)
+    git_rel = _relative_path_for_git(git_root, file_path)
+    if not git_rel:
+        return {
+            "commit_hash": "0" * 40,
+            "author": "unknown",
+            "commit_timestamp": _now_iso(),
+            "commit_message": "file outside git work tree; synthetic candidate (check CONTRACT_ENFORCER_GIT_TOPLEVEL)",
+            "days_since_commit": _days_since_file_mtime(file_path),
+        }
+
     try:
         # Prefer last commit that touched it.
         cmd = [
@@ -406,9 +565,9 @@ def _commit_for_file(file_path: Path) -> dict[str, str | float]:
             "--since=14 days ago",
             "--format=%H|%an|%ae|%ai|%s",
             "--",
-            rel,
+            git_rel,
         ]
-        out = subprocess.check_output(cmd, cwd=str(_REPO), stderr=subprocess.STDOUT, text=True).strip()
+        out = subprocess.check_output(cmd, cwd=str(git_root), stderr=subprocess.STDOUT, text=True).strip()
         if not out:
             return {
                 "commit_hash": "0" * 40,
@@ -460,7 +619,8 @@ def attribute_violations(
     lineage_jsonl: Path | None = None,
     subscriptions_yaml: Path | None = None,
 ) -> None:
-    lineage = _load_latest_lineage(_REPO, lineage_jsonl)
+    lineage, lineage_path = _load_latest_lineage(_REPO, lineage_jsonl)
+    attribution_context = _build_attribution_context(lineage, lineage_path, _REPO)
     nodes, edges = _index_lineage(lineage)
 
     violations = list(_iter_jsonl(input_path))
@@ -494,10 +654,10 @@ def attribute_violations(
 
         for rank, (file_node_id, hops) in enumerate(upstream_files, start=1):
             node = nodes.get(file_node_id, {})
-            rel = str(node.get("metadata", {}).get("path") or node.get("metadata", {}).get("file_path") or "")
+            rel = _path_from_file_node(str(file_node_id), node if isinstance(node, dict) else {})
             file_path = (_REPO / rel) if rel else (_REPO / "src" / "unknown.py")
 
-            commit = _commit_for_file(file_path)
+            commit = _commit_for_file(file_path, project_root=_REPO)
             # blame_hint (line range) applies to the primary producer only; other ranks use
             # _default_blame_line_range(check_id) inside _merge_blame_into_commit.
             if rel and rank <= _MAX_BLAME_MERGE_RANKS:
@@ -553,6 +713,7 @@ def attribute_violations(
             }
         ]
         enriched["blast_radius"] = blast
+        enriched["attribution_context"] = dict(attribution_context)
 
         out_lines.append(json.dumps(enriched, ensure_ascii=False))
 

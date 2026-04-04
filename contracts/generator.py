@@ -26,8 +26,10 @@ if str(_REPO) not in sys.path:
 from contracts.common import (
     iso_now,
     jsonl_snapshot_id,
+    load_baselines,
     load_jsonl_with_issues,
     repo_root,
+    save_baselines,
     write_yaml,
 )
 
@@ -83,6 +85,91 @@ def _numeric_stats(values: list[float]) -> dict[str, float]:
         "p99": float(np.percentile(arr, 99)),
         "stddev": float(np.std(arr)),
     }
+
+
+def _generator_numeric_baseline_key(contract_id: str, field_path: str) -> str:
+    """Namespaced keys so generator snapshots do not overwrite runner drift baselines."""
+    return f"{contract_id}::generator.numeric.{field_path}"
+
+
+def persist_generator_numeric_baselines(
+    root: Path,
+    contract_id: str,
+    numeric_profiles: dict[str, dict[str, float]],
+) -> dict[str, dict[str, Any]]:
+    """
+    Merge mean/stddev per numeric field into `schema_snapshots/baselines.json`.
+
+    Stores `std` alongside `stddev` (same value, floored) for compatibility with
+    runner drift checks that read `std`.
+    """
+    if not numeric_profiles:
+        return {}
+    baselines = load_baselines(root)
+    ts = iso_now()
+    written: dict[str, dict[str, Any]] = {}
+    for field_path, stats in numeric_profiles.items():
+        if not stats or "mean" not in stats:
+            continue
+        stddev = float(stats.get("stddev", 0.0))
+        key = _generator_numeric_baseline_key(contract_id, field_path)
+        entry = {
+            "mean": round(float(stats["mean"]), 8),
+            "stddev": round(stddev, 8),
+            "std": round(max(stddev, 1e-9), 8),
+            "source": "contract_generator",
+            "updated_at": ts,
+        }
+        baselines[key] = entry
+        written[field_path] = entry
+    save_baselines(root, baselines)
+    return written
+
+
+def _looks_like_unit_interval(profile: dict[str, float] | None) -> bool:
+    if not profile:
+        return False
+    mn = profile.get("min")
+    mx = profile.get("max")
+    if mn is None or mx is None:
+        return False
+    return float(mn) >= -0.001 and float(mx) <= 1.001
+
+
+def suspicious_unit_interval_mean_notes(
+    profile: dict[str, float] | None,
+    *,
+    margin: float = 0.05,
+    lower: float = 0.0,
+    upper: float = 1.0,
+) -> list[str]:
+    """
+    Flag degenerate bounded distributions: mean hugging 0 or 1 (e.g. confidence always low/high).
+    """
+    if not profile or "mean" not in profile or not _looks_like_unit_interval(profile):
+        return []
+    m = float(profile["mean"])
+    notes: list[str] = []
+    if m <= lower + margin:
+        notes.append(
+            f"[suspicious distribution] Clause note: field mean={m:.4f} is within {margin} of {lower} "
+            "(possible collapse to minimum / uninformative scores)."
+        )
+    if m >= upper - margin:
+        notes.append(
+            f"[suspicious distribution] Clause note: field mean={m:.4f} is within {margin} of {upper} "
+            "(possible saturation / ceiling effect)."
+        )
+    return notes
+
+
+def _append_distribution_clause_text(base: str, notes: list[str] | None) -> str:
+    if not notes:
+        return base
+    suffix = " ".join(notes)
+    if not base.endswith(" ") and suffix:
+        base = f"{base} "
+    return base + suffix
 
 
 def _load_latest_lineage(root: Path, lineage_jsonl: Path | None = None) -> dict[str, Any] | None:
@@ -284,6 +371,8 @@ def _llm_annotations_stub(
     samples: list[Any],
     neighbors: list[str],
     profile: dict[str, Any] | None = None,
+    *,
+    distribution_clause_notes: list[str] | None = None,
 ) -> dict[str, Any]:
     desc = (
         f"Column `{column}` in `{table}`; neighbors: {neighbors}. "
@@ -298,6 +387,7 @@ def _llm_annotations_stub(
             f" Observed profile on this snapshot: min={profile.get('min')}, max={profile.get('max')}, "
             f"mean={profile.get('mean')}, p95={profile.get('p95')}."
         )
+    rule = _append_distribution_clause_text(rule, distribution_clause_notes)
     return {
         "column": column,
         "table": table,
@@ -308,6 +398,7 @@ def _llm_annotations_stub(
         "statistical_context": (
             {k: profile[k] for k in ("min", "max", "mean", "p95", "stddev") if profile and k in profile} or None
         ),
+        "distribution_clause_notes": distribution_clause_notes or [],
     }
 
 
@@ -450,31 +541,59 @@ def _llm_annotate_anthropic(column: str, table: str, samples: list[Any], neighbo
         return None
 
 
+def _merge_llm_distribution_notes(out: dict[str, Any], notes: list[str] | None) -> None:
+    if not notes:
+        out.setdefault("distribution_clause_notes", [])
+        return
+    br = str(out.get("business_rule", "")).strip()
+    out["business_rule"] = _append_distribution_clause_text(br, notes)
+    out["distribution_clause_notes"] = notes
+
+
 def _maybe_llm_annotate(
     column: str,
     table: str,
     samples: list[Any],
     neighbors: list[str],
     profile: dict[str, Any] | None = None,
+    *,
+    distribution_clause_notes: list[str] | None = None,
 ) -> dict[str, Any]:
     if os.environ.get("CONTRACT_LLM_OFF", "").strip() in ("1", "true", "yes"):
-        return _llm_annotations_stub(column, table, samples, neighbors, profile=profile)
+        return _llm_annotations_stub(
+            column,
+            table,
+            samples,
+            neighbors,
+            profile=profile,
+            distribution_clause_notes=distribution_clause_notes,
+        )
     out = _llm_annotate_anthropic(column, table, samples, neighbors)
     if out:
         if profile:
-            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}
+            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95", "stddev") if k in profile}
+        _merge_llm_distribution_notes(out, distribution_clause_notes)
         return out
     out = _llm_annotate_openrouter(column, table, samples, neighbors)
     if out:
         if profile:
-            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}
+            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95", "stddev") if k in profile}
+        _merge_llm_distribution_notes(out, distribution_clause_notes)
         return out
     out = _llm_annotate_openai(column, table, samples, neighbors)
     if out:
         if profile:
-            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95") if k in profile}
+            out["statistical_context"] = {k: profile[k] for k in ("min", "max", "mean", "p95", "stddev") if k in profile}
+        _merge_llm_distribution_notes(out, distribution_clause_notes)
         return out
-    return _llm_annotations_stub(column, table, samples, neighbors, profile=profile)
+    return _llm_annotations_stub(
+        column,
+        table,
+        samples,
+        neighbors,
+        profile=profile,
+        distribution_clause_notes=distribution_clause_notes,
+    )
 
 
 def build_week3_contract(
@@ -496,6 +615,28 @@ def build_week3_contract(
                 confidences.append(float(c))
     conf_stats = _numeric_stats(confidences)
     proc_ms = [r.get("processing_time_ms") for r in rows if isinstance(r.get("processing_time_ms"), int)]
+    proc_stats = _numeric_stats([float(x) for x in proc_ms]) if proc_ms else {}
+
+    numeric_profiles_w3: dict[str, dict[str, float]] = {}
+    if conf_stats:
+        numeric_profiles_w3["extracted_facts.confidence"] = conf_stats
+    if proc_stats:
+        numeric_profiles_w3["processing_time_ms"] = proc_stats
+    if not df_flat.empty and "entity_count" in df_flat.columns:
+        ec_vals = df_flat["entity_count"].dropna().astype(float).tolist()
+        ec_stats = _numeric_stats(ec_vals)
+        if ec_stats:
+            numeric_profiles_w3["extracted_facts.entity_count"] = ec_stats
+
+    baselines_written_w3 = persist_generator_numeric_baselines(
+        root, "week3-document-refinery-extractions", numeric_profiles_w3
+    )
+    confidence_distribution_notes = suspicious_unit_interval_mean_notes(conf_stats or None)
+    suspicion_clause_summary: list[dict[str, Any]] = []
+    if confidence_distribution_notes:
+        suspicion_clause_summary.append(
+            {"field": "extracted_facts.confidence", "notes": confidence_distribution_notes}
+        )
 
     downstream = _downstream_for_dataset(lineage, "week3") or _downstream_for_dataset(
         lineage, "pipeline::week3"
@@ -516,6 +657,7 @@ def build_week3_contract(
         [str(x) for x in confidences[:20]],
         ["doc_id", "source_hash", "extraction_model"],
         profile=conf_stats or None,
+        distribution_clause_notes=confidence_distribution_notes or None,
     )
 
     contract: dict[str, Any] = {
@@ -590,7 +732,10 @@ def build_week3_contract(
                             "type": "number",
                             "minimum": 0.0,
                             "maximum": 1.0,
-                            "description": "Model confidence; breaking if scaled to 0–100 integer.",
+                            "description": _append_distribution_clause_text(
+                                "Model confidence; breaking if scaled to 0–100 integer.",
+                                confidence_distribution_notes,
+                            ),
                         },
                         "page_ref": {
                             "oneOf": [{"type": "integer", "minimum": 1}, {"type": "null"}],
@@ -673,7 +818,10 @@ def build_week3_contract(
             "structural_engine": profile.get("engine"),
             "flat_row_count": int(len(df_flat)),
             "confidence_numeric_profile": conf_stats,
-            "processing_time_ms_stats": _numeric_stats([float(x) for x in proc_ms]) if proc_ms else {},
+            "processing_time_ms_stats": proc_stats,
+            "generator_numeric_baselines_path": str((root / "schema_snapshots" / "baselines.json").resolve()),
+            "generator_numeric_baselines": baselines_written_w3,
+            "suspicious_distribution_clauses": suspicion_clause_summary,
             **({"ingest": ingest} if ingest else {}),
         },
         "llm_annotations": llm_block,
@@ -786,6 +934,22 @@ def build_week5_contract(
                 "breaking_if_changed": ["payload", "event_type"],
             }
         ]
+    payload_bytes_vals = [
+        float(r.get("payload", {}).get("bytes"))
+        for r in rows
+        if isinstance(r.get("payload"), dict) and isinstance(r.get("payload", {}).get("bytes"), (int, float))
+    ]
+    payload_bytes_stats = _numeric_stats(payload_bytes_vals) if payload_bytes_vals else {}
+    baselines_written_w5 = persist_generator_numeric_baselines(
+        root,
+        "week5-event-sourcing-events",
+        {"payload.bytes": payload_bytes_stats} if payload_bytes_stats else {},
+    )
+    payload_bytes_distribution_notes = suspicious_unit_interval_mean_notes(payload_bytes_stats or None)
+    w5_suspicion_summary: list[dict[str, Any]] = []
+    if payload_bytes_distribution_notes:
+        w5_suspicion_summary.append({"field": "payload.bytes", "notes": payload_bytes_distribution_notes})
+
     contract: dict[str, Any] = {
         "kind": "DataContract",
         "apiVersion": "v3.0.0",
@@ -860,6 +1024,10 @@ def build_week5_contract(
             root, "week5-event-sourcing-events", downstream, subscriptions_yaml
         ),
         "profiling": {
+            "payload_bytes_numeric_profile": payload_bytes_stats,
+            "generator_numeric_baselines_path": str((root / "schema_snapshots" / "baselines.json").resolve()),
+            "generator_numeric_baselines": baselines_written_w5,
+            "suspicious_distribution_clauses": w5_suspicion_summary,
             **({"ingest": ingest} if ingest else {}),
         },
         "llm_annotations": _maybe_llm_annotate(
@@ -867,15 +1035,8 @@ def build_week5_contract(
             "events",
             [str(r.get("payload", {}).get("bytes")) for r in rows[:20]],
             ["event_type", "aggregate_id"],
-            profile=_numeric_stats(
-                [
-                    float(r.get("payload", {}).get("bytes"))
-                    for r in rows
-                    if isinstance(r.get("payload"), dict)
-                    and isinstance(r.get("payload", {}).get("bytes"), (int, float))
-                ]
-            )
-            or None,
+            profile=payload_bytes_stats or None,
+            distribution_clause_notes=payload_bytes_distribution_notes or None,
         ),
     }
     return contract

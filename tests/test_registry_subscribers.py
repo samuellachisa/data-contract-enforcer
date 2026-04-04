@@ -9,7 +9,10 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from contracts.registry import subscribers_for_violation  # noqa: E402
+from contracts.registry import (  # noqa: E402
+    breaking_field_matches_check,
+    subscribers_for_violation,
+)
 
 
 def test_subscribers_for_violation_matches_breaking_field(tmp_path: Path) -> None:
@@ -64,3 +67,39 @@ def test_subscribers_for_violation_no_match_wrong_contract(tmp_path: Path) -> No
         encoding="utf-8",
     )
     assert subscribers_for_violation(tmp_path, "demo-contract", "week3.x") == []
+
+
+def test_breaking_field_runner_schema_required_prefix_only() -> None:
+    assert breaking_field_matches_check("runner.schema.required", "runner.schema.required.doc_id") is True
+    assert breaking_field_matches_check("runner.schema.required", "week3.doc_id.required") is False
+
+
+def test_breaking_field_cross_ingest_prefix() -> None:
+    assert breaking_field_matches_check("cross.ingest", "cross.ingest.week3_extractions.line_2") is True
+    assert breaking_field_matches_check("cross.ingest", "cross.week4.doc_id.as_lineage_node") is False
+
+
+def test_repo_subscriptions_match_week4_snapshot_clause() -> None:
+    matched = subscribers_for_violation(
+        ROOT,
+        "week4-brownfield-lineage-snapshots",
+        "week4.snapshot.non_empty",
+    )
+    sids = {m.get("subscriber_id") for m in matched}
+    assert "week6-synthesis-consumer" in sids
+    assert "week7-data-contract-enforcer" in sids
+
+
+def test_repo_subscriptions_langsmith_to_week7() -> None:
+    matched = subscribers_for_violation(ROOT, "langsmith-trace-runs", "langsmith.total_tokens.sum")
+    assert any(m.get("subscriber_id") == "week7-data-contract-enforcer" for m in matched)
+
+
+def test_repo_subscriptions_cross_system_to_week7() -> None:
+    matched = subscribers_for_violation(
+        ROOT,
+        "cross-system-dependencies",
+        "cross.week4.doc_id.as_lineage_node",
+    )
+    assert len(matched) == 1
+    assert matched[0].get("subscriber_id") == "week7-data-contract-enforcer"

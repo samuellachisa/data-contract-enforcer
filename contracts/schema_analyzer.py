@@ -88,6 +88,222 @@ def _filter_contract_snapshots(dirs: list[Path]) -> list[Path]:
     return kept if len(kept) >= 2 else dirs
 
 
+def _float_or_none(val: Any) -> float | None:
+    if val is None:
+        return None
+    try:
+        return float(val)
+    except (TypeError, ValueError):
+        return None
+
+
+def _is_unit_interval_schema(d: dict[str, Any]) -> bool:
+    """JSON-Schema node looks like a 0–1 probability / confidence (explicit maximum ≤ 1)."""
+    t = d.get("type")
+    if t not in ("number", "integer", None):
+        return False
+    mx = _float_or_none(d.get("maximum"))
+    if mx is None:
+        return False
+    mn = _float_or_none(d.get("minimum"))
+    if mn is not None and mn < -0.001:
+        return False
+    return mx <= 1.001
+
+
+def _is_hundred_scale_schema(d: dict[str, Any]) -> bool:
+    """Schema looks like 0–100 centiscore / percent integer-style cap (maximum ≥ 99)."""
+    t = d.get("type")
+    if t not in ("number", "integer"):
+        return False
+    mx = _float_or_none(d.get("maximum"))
+    if mx is None:
+        return False
+    mn = _float_or_none(d.get("minimum"))
+    if mn is not None and mn < -0.001:
+        return False
+    return mx >= 99.0
+
+
+def classify_scale_change_critical(da: dict[str, Any], db: dict[str, Any], path: str) -> dict[str, Any] | None:
+    """
+    Narrow-type classification: unit-interval (0–1) numeric field moving to ~0–100 scale.
+    Typical failure: confidence float 0.0–1.0 replaced by integer 0–100 without consumer migration.
+    """
+    if not isinstance(da, dict) or not isinstance(db, dict):
+        return None
+    if not _is_unit_interval_schema(da) or not _is_hundred_scale_schema(db):
+        return None
+    return {
+        "pattern": "UNIT_INTERVAL_TO_HUNDRED_SCALE",
+        "summary": (
+            "Scale semantics: 0–1 unit interval to ~0–100 scale (CRITICAL breaking; "
+            "e.g. probability float to centiscore int)"
+        ),
+        "field": path,
+        "from_type": da.get("type"),
+        "to_type": db.get("type"),
+        "from_minimum": da.get("minimum"),
+        "from_maximum": da.get("maximum"),
+        "to_minimum": db.get("minimum"),
+        "to_maximum": db.get("maximum"),
+    }
+
+
+def _diff_field_hits_registry_clause(diff_field: str, registry_field: str) -> bool:
+    """Map evolved schema path to registry breaking_field / ValidationRunner clause tails."""
+    if not diff_field or not registry_field:
+        return False
+    r = registry_field.strip()
+    flat = diff_field.replace(".properties.", ".").replace(".items.", ".")
+    if flat == r or flat.endswith("." + r) or r in flat or r in diff_field:
+        return True
+    rdot = r.split(".")
+    for i in range(len(rdot), 0, -1):
+        prefix = ".".join(rdot[:i])
+        if not prefix:
+            continue
+        if prefix == flat or flat.startswith(prefix + ".") or prefix in flat:
+            return True
+    return False
+
+
+def per_consumer_failure_modes(contract_id: str, diff: dict[str, Any], root: Path) -> list[dict[str, Any]]:
+    """
+    Tier-1: contract_registry/subscriptions.yaml subscribers for this contract.
+    Tier-2 note: lineage JSONL should be regenerated after producer schema changes.
+    """
+    from contracts.registry import load_subscriptions
+
+    breaking_rows = diff.get("breaking_changes", []) or []
+    diff_fields = [str(c.get("field", "")) for c in breaking_rows if c.get("field")]
+    scale_critical = any(c.get("classification") == "SCALE_CHANGE_CRITICAL" for c in breaking_rows)
+
+    modes: list[dict[str, Any]] = []
+    for sub in load_subscriptions(root):
+        if str(sub.get("contract_id", "")) != contract_id:
+            continue
+        sid = str(sub.get("subscriber_id", ""))
+        team = str(sub.get("subscriber_team", ""))
+        fc = sub.get("fields_consumed") or []
+        fc_list = list(fc) if isinstance(fc, list) else []
+
+        matched_bf: list[dict[str, Any]] = []
+        notes: list[str] = []
+        for bf in sub.get("breaking_fields") or []:
+            if not isinstance(bf, dict):
+                continue
+            fld = str(bf.get("field", ""))
+            if any(_diff_field_hits_registry_clause(df, fld) for df in diff_fields):
+                matched_bf.append(bf)
+                notes.append(
+                    f"Registry clause `{fld}` likely implicated; consumed fields {fc_list}. "
+                    f"ValidationRunner / cross-checks on that path may FAIL until aligned."
+                )
+
+        if scale_critical:
+            notes.append(
+                "CRITICAL scale change detected: values differ by ~100× if treated as the same semantic "
+                "(0–1 float vs 0–100 int). Update producer encoding or consumer normalization before rollout."
+            )
+
+        if not notes:
+            notes.append(
+                "No registry breaking_field path matched diff fields by substring; still re-validate all "
+                "Tier-1 checks and regenerate Week 4 lineage after deploy."
+            )
+
+        modes.append(
+            {
+                "subscriber_id": sid,
+                "subscriber_team": team,
+                "fields_consumed": fc_list,
+                "registry_breaking_fields_triggered": [
+                    {"field": x.get("field"), "reason": x.get("reason")} for x in matched_bf
+                ],
+                "likely_failure_modes": notes,
+                "lineage_note": (
+                    "Regenerate `outputs/week4/lineage_snapshots.jsonl` after producer schema changes so "
+                    "FILE/PIPELINE nodes and edges match the deployed code paths."
+                ),
+            }
+        )
+    return modes
+
+
+def rollback_plan_sections(contract_id: str, diff: dict[str, Any]) -> dict[str, Any]:
+    """Structured rollback guidance (operations + verification)."""
+    breaking = diff.get("breaking_changes", []) or []
+    scale_critical = any(c.get("classification") == "SCALE_CHANGE_CRITICAL" for c in breaking)
+    any_critical = any(c.get("severity") == "CRITICAL" for c in breaking) or scale_critical
+
+    sections: dict[str, Any] = {
+        "summary": (
+            f"Rollback plan for `{contract_id}`: revert producer schema, pin consumers, and re-validate "
+            f"before re-attempting rollout."
+        ),
+        "immediate_actions": [
+            "Revert or pin the producer deployment that introduced the incompatible schema snapshot.",
+            f"Restore the previous timestamped folder under `schema_snapshots/{contract_id}/` as the diff baseline.",
+            "Stop promoting new JSONL batches written against the breaking schema until consumers are migrated.",
+        ],
+        "consumer_coordination": [
+            "Identify downstream owners via `contract_registry/subscriptions.yaml` (contact + subscriber_team).",
+            "Roll back or feature-flag consumer services that read the affected fields before producer rollback completes.",
+        ],
+        "data_plane": [
+            "Quarantine or replay-sanitize partial exports if any consumer ingested rows under the breaking schema.",
+        ],
+        "verification_after_rollback": [
+            "Run `python contracts/runner.py --contract generated_contracts/*.yaml --data outputs/... --mode AUDIT`.",
+            "Confirm `validation_reports/*.json` contain no FAIL on CRITICAL clauses for this contract.",
+            "Regenerate Week 4 lineage and run `python contracts/attributor.py` on a sample violation to confirm graph health.",
+        ],
+        "documentation": [
+            "Record the incident and the exact snapshot pair in `validation_reports/migration_impact_*.json` for audit.",
+        ],
+    }
+
+    if scale_critical:
+        sections["scale_change_specific"] = [
+            "Treat 0–1 float ↔ 0–100 int as a data bug, not a silent coerce: fix producer OR divide/multiply at a single boundary.",
+            "Refresh statistical baselines in `schema_snapshots/baselines.json` after semantics are stable.",
+        ]
+    else:
+        sections["scale_change_specific"] = []
+
+    if any_critical:
+        sections["escalation"] = [
+            "Escalate to platform owner: CRITICAL-classified schema drift blocks safe attribution and enforcement.",
+        ]
+    else:
+        sections["escalation"] = []
+
+    return sections
+
+
+def _rollback_plan_text(sections: dict[str, Any]) -> str:
+    """Single string for backward-compatible `rollback_plan` fields."""
+    lines = [str(sections.get("summary", "")).strip()]
+    for key in (
+        "immediate_actions",
+        "consumer_coordination",
+        "data_plane",
+        "verification_after_rollback",
+        "scale_change_specific",
+        "escalation",
+        "documentation",
+    ):
+        block = sections.get(key) or []
+        if not block:
+            continue
+        title = key.replace("_", " ").title()
+        lines.append(f"{title}:")
+        for item in block:
+            lines.append(f"  - {item}")
+    return "\n".join(lines).strip()
+
+
 def _diff_field_specs(
     da: Any,
     db: Any,
@@ -95,6 +311,7 @@ def _diff_field_specs(
     type_changes: list[dict[str, Any]],
     breaking_changes: list[dict[str, Any]],
     compatible_changes: list[dict[str, Any]],
+    narrow_classifications: list[dict[str, Any]],
 ) -> None:
     """Recursive diff on JSON-Schema-like field definition dicts."""
     if not isinstance(da, dict) or not isinstance(db, dict):
@@ -109,16 +326,58 @@ def _diff_field_specs(
             )
         return
 
-    if da.get("type") != db.get("type"):
-        type_changes.append({"field": path, "from": da.get("type"), "to": db.get("type")})
+    scale_critical_emitted = False
+    type_a, type_b = da.get("type"), db.get("type")
+
+    if type_a != type_b:
+        type_changes.append({"field": path, "from": type_a, "to": type_b})
+        sci = classify_scale_change_critical(da, db, path)
+        if sci:
+            narrow_classifications.append(dict(sci))
+            breaking_changes.append(
+                {
+                    "change_type": sci["summary"],
+                    "classification": "SCALE_CHANGE_CRITICAL",
+                    "severity": "CRITICAL",
+                    "field": path,
+                    "from": type_a,
+                    "to": type_b,
+                    "from_minimum": da.get("minimum"),
+                    "from_maximum": da.get("maximum"),
+                    "to_minimum": db.get("minimum"),
+                    "to_maximum": db.get("maximum"),
+                }
+            )
+            scale_critical_emitted = True
+        else:
+            breaking_changes.append(
+                {
+                    "change_type": "Change type (breaking)",
+                    "field": path,
+                    "from": type_a,
+                    "to": type_b,
+                }
+            )
+    elif classify_scale_change_critical(da, db, path):
+        sci = classify_scale_change_critical(da, db, path)
+        assert sci is not None
+        type_changes.append({"field": path, "from": type_a, "to": type_b, "note": "bounds_scale_shift"})
+        narrow_classifications.append(dict(sci))
         breaking_changes.append(
             {
-                "change_type": "Change type (breaking)",
+                "change_type": sci["summary"],
+                "classification": "SCALE_CHANGE_CRITICAL",
+                "severity": "CRITICAL",
                 "field": path,
-                "from": da.get("type"),
-                "to": db.get("type"),
+                "from": type_a,
+                "to": type_b,
+                "from_minimum": da.get("minimum"),
+                "from_maximum": da.get("maximum"),
+                "to_minimum": db.get("minimum"),
+                "to_maximum": db.get("maximum"),
             }
         )
+        scale_critical_emitted = True
 
     if da.get("required") != db.get("required"):
         breaking_changes.append(
@@ -142,6 +401,8 @@ def _diff_field_specs(
             )
 
     for attr in ("minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"):
+        if scale_critical_emitted and attr in ("minimum", "maximum"):
+            continue
         if da.get(attr) != db.get(attr):
             breaking_changes.append(
                 {
@@ -195,12 +456,14 @@ def _diff_field_specs(
             elif pk not in pb:
                 breaking_changes.append({"change_type": "Remove nested property (breaking)", "field": sub})
             else:
-                _diff_field_specs(pa[pk], pb[pk], sub, type_changes, breaking_changes, compatible_changes)
+                _diff_field_specs(
+                    pa[pk], pb[pk], sub, type_changes, breaking_changes, compatible_changes, narrow_classifications
+                )
 
     ia, ib = da.get("items"), db.get("items")
     if isinstance(ia, dict) and isinstance(ib, dict):
         items_path = f"{path}.items" if path else "items"
-        _diff_field_specs(ia, ib, items_path, type_changes, breaking_changes, compatible_changes)
+        _diff_field_specs(ia, ib, items_path, type_changes, breaking_changes, compatible_changes, narrow_classifications)
 
 
 def _diff_schemas(schema_a: dict[str, Any], schema_b: dict[str, Any]) -> dict[str, Any]:
@@ -217,12 +480,15 @@ def _diff_schemas(schema_a: dict[str, Any], schema_b: dict[str, Any]) -> dict[st
     breaking_changes: list[dict[str, Any]] = []
     compatible_changes: list[dict[str, Any]] = []
     type_changes: list[dict[str, Any]] = []
+    narrow_classifications: list[dict[str, Any]] = []
 
     for k in changed:
         da = schema_a.get(k)
         db = schema_b.get(k)
         if isinstance(da, dict) and isinstance(db, dict):
-            _diff_field_specs(da, db, k, type_changes, breaking_changes, compatible_changes)
+            _diff_field_specs(
+                da, db, k, type_changes, breaking_changes, compatible_changes, narrow_classifications
+            )
         elif da != db:
             breaking_changes.append(
                 {
@@ -256,17 +522,36 @@ def _diff_schemas(schema_a: dict[str, Any], schema_b: dict[str, Any]) -> dict[st
         "type_changes": type_changes,
         "breaking_changes": breaking_changes,
         "compatible_changes": compatible_changes,
+        "narrow_classifications": narrow_classifications,
         "compatibility_verdict": verdict,
     }
 
 
-def _migration_impact_report(diff: dict[str, Any], contract_id: str) -> dict[str, Any]:
+def _migration_impact_report(
+    diff: dict[str, Any],
+    contract_id: str,
+    *,
+    root: Path | None = None,
+) -> dict[str, Any]:
+    repo = root if root is not None else _REPO
+
     if diff.get("compatibility_verdict") == "BACKWARD_COMPATIBLE":
         return {
             "contract_id": contract_id,
             "compatibility_verdict": diff.get("compatibility_verdict"),
             "migration_checklist": [],
             "rollback_plan": "No breaking change detected; no rollback needed.",
+            "rollback_plan_sections": {
+                "summary": "No rollback required.",
+                "immediate_actions": [],
+                "consumer_coordination": [],
+                "data_plane": [],
+                "verification_after_rollback": [],
+                "scale_change_specific": [],
+                "escalation": [],
+                "documentation": [],
+            },
+            "per_consumer_failure_modes": [],
             "diff": diff,
         }
 
@@ -286,6 +571,19 @@ def _migration_impact_report(diff: dict[str, Any], contract_id: str) -> dict[str
             }
         )
 
+    if any(c.get("classification") == "SCALE_CHANGE_CRITICAL" for c in diff.get("breaking_changes", []) or []):
+        checklist.insert(
+            0,
+            {
+                "task": (
+                    "Resolve CRITICAL scale change: align producer and consumers on 0–1 float vs 0–100 int semantics "
+                    "before any production traffic."
+                ),
+                "owner": "platform-team",
+            },
+        )
+
+    rsections_breaking = rollback_plan_sections(contract_id, diff)
     return {
         "contract_id": contract_id,
         "compatibility_verdict": diff.get("compatibility_verdict"),
@@ -295,7 +593,9 @@ def _migration_impact_report(diff: dict[str, Any], contract_id: str) -> dict[str
         or [
             {"task": "Coordinate contract producer and all downstream consumers before redeploying.", "owner": "platform-team"}
         ],
-        "rollback_plan": "Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete.",
+        "rollback_plan": _rollback_plan_text(rsections_breaking),
+        "rollback_plan_sections": rsections_breaking,
+        "per_consumer_failure_modes": per_consumer_failure_modes(contract_id, diff, repo),
     }
 
 
@@ -342,7 +642,7 @@ def main() -> None:
     schema_a = _extract_schema_def(snap_a)
     schema_b = _extract_schema_def(snap_b)
     diff = _diff_schemas(schema_a, schema_b)
-    impact = _migration_impact_report(diff, args.contract_id)
+    impact = _migration_impact_report(diff, args.contract_id, root=_REPO)
 
     out = {
         "contract_id": args.contract_id,
@@ -352,7 +652,8 @@ def main() -> None:
         "migration_impact": impact,
         "classification_taxonomy_used": (
             "nested JSON-Schema diff: type/required/format/pattern/min/max/enum/minItems/maxItems; "
-            "nested properties/items; top-level add/remove; breaking vs compatible adds."
+            "nested properties/items; top-level add/remove; breaking vs compatible adds; "
+            "narrow_type SCALE_CHANGE_CRITICAL for 0–1 unit interval to ~0–100 scale."
         ),
     }
 
@@ -370,18 +671,13 @@ def main() -> None:
         "compatibility_verdict": diff.get("compatibility_verdict"),
         "migration_impact": impact,
         "rollback_plan": impact.get("rollback_plan"),
+        "rollback_plan_sections": impact.get("rollback_plan_sections"),
         "migration_checklist": impact.get("migration_checklist"),
-        "blast_radius_note": "See outputs/week4/lineage_snapshots.jsonl downstream consumers in generated contracts lineage sections.",
-        "per_consumer_failure_modes": [
-            {
-                "consumer": "week6-synthesis-consumer",
-                "failure_mode": "Validation checks keyed on field types and required flags will ERROR or FAIL.",
-            },
-            {
-                "consumer": "week6-synthesis-consumer",
-                "failure_mode": "Blast radius may omit new nodes until lineage graph is regenerated.",
-            },
-        ],
+        "per_consumer_failure_modes": impact.get("per_consumer_failure_modes"),
+        "blast_radius_note": (
+            "Tier-1: `contract_registry/subscriptions.yaml`. "
+            "Tier-2: `outputs/week4/lineage_snapshots.jsonl` — regenerate after producer schema rollback or forward fix."
+        ),
     }
     mig_path.write_text(json.dumps(mig_payload, indent=2), encoding="utf-8")
     print(f"Wrote migration impact report to {mig_path}")
