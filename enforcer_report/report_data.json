@@ -1,6 +1,6 @@
 {
-  "report_generated_at": "2026-04-04T17:32:50Z",
-  "generated_at": "2026-04-04T17:32:50Z",
+  "report_generated_at": "2026-04-04T21:02:24Z",
+  "generated_at": "2026-04-04T21:02:24Z",
   "period": "2026-03-28 to 2026-04-04",
   "sources_used": {
     "week3_validation": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\week3_latest.json",
@@ -16,6 +16,25 @@
     "total_subscriber_rows_across_violations": 0
   },
   "data_health_score": 100.0,
+  "data_health_score_breakdown": {
+    "severity_deductions_table": {
+      "CRITICAL": 20,
+      "HIGH": 10,
+      "MEDIUM": 5,
+      "LOW": 1,
+      "WARNING": 1
+    },
+    "type_weights_effective": {
+      "week3.": 1.0,
+      "week5.": 1.0,
+      "week4.": 1.0,
+      "langsmith.": 1.0,
+      "week2.": 1.0,
+      "cross.": 1.0,
+      "default": 1.0
+    },
+    "per_failing_check": []
+  },
   "n_critical_contract_violations": 0,
   "data_health_narrative": "Score 100.0/100 from 0 failed check(s) across validation_reports/*.json (manual rubric deductions). All sampled systems operating within contract parameters.",
   "top_violations_plain_language": [],
@@ -28,6 +47,14 @@
     "embedding_drift": -0.0,
     "output_violation_rate": 0.0,
     "status": "PASS"
+  },
+  "violations_pagination": {
+    "page": 0,
+    "page_size": 3,
+    "total_violations": 0,
+    "total_pages": 1,
+    "returned_count": 0,
+    "sort": "severity_then_records_failing_then_check_id"
   },
   "violations_this_week": [],
   "schema_changes_detected": [
@@ -58,12 +85,17 @@
     {
       "priority": 1,
       "risk_reduction": "Medium",
-      "action": "Review failing rows in `validation_reports/*.json` and align producers with `generated_contracts/*.yaml`."
+      "action": "When new FAIL/ERROR rows appear, inspect `validation_reports/week3_latest.json` and reconcile producer `outputs/week3/extractions.jsonl` with `generated_contracts/week3_extractions.yaml` (contract id `week3-document-refinery-extractions`). High-signal clauses: `week3.extracted_facts.confidence.range` and `week3.extracted_facts.confidence.statistical_drift` on field `extracted_facts[*].confidence`; `week3.extracted_facts.entity_refs.relationship` on `extracted_facts[*].entity_refs[]` vs `entities[]`. Primary owner file: `src/week3/extractor.py`."
+    },
+    {
+      "priority": 2,
+      "risk_reduction": "Medium",
+      "action": "Close BREAKING evolution on contract `week3-document-refinery-extractions`, field `extracted_facts`: compare timestamped `schema_snapshots/week3-document-refinery-extractions/*/schema.yaml`, then read `validation_reports/schema_evolution_week3.json` and the newest `validation_reports/migration_impact_*.json`. Update consumers such as `src/week4/cartographer.py` to match the deployed shape; after editing `generated_contracts/week3_extractions.yaml`, re-run `contracts/schema_analyzer.py`. Current snapshot/migration signals: week3-document-refinery-extractions: compatibility_verdict=BREAKING; week3-document-refinery-extractions: breaking field `extracted_facts`; week3-document-refinery-extractions: migration task \u2014 Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness."
     },
     {
       "priority": 4,
       "risk_reduction": "Low",
-      "action": "Add `C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\contracts\\runner.py` as a CI step before Week 3 deployments; refresh drift baselines monthly."
+      "action": "Add CI: `python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions.jsonl --mode ENFORCE` before promoting Week 3 JSONL. On a schedule (or after distribution shifts), re-run the same command on clean data and refresh numeric means in `schema_snapshots/baselines.json` used by clause `week3.extracted_facts.confidence.statistical_drift`."
     }
   ],
   "pdf_path": "C:/Users/SAMILA/Documents/Projects/Personal/tenx/Week 7/Week 7 (Data Contract Enforcer)/enforcer_report/report_20260404.pdf",
