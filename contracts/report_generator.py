@@ -108,6 +108,87 @@ def _top_violations_from_validation(week3: dict[str, Any] | None, week5: dict[st
     return items[:3]
 
 
+def _normalize_violation_row(item: dict[str, Any]) -> dict[str, Any]:
+    """Uniform keys for dedupe, sorting, and _describe_violation."""
+    row = dict(item)
+    if not row.get("field"):
+        row["field"] = row.get("column_name") or (
+            "verdict_record" if row.get("type") == "llm_output_schema" else "*"
+        )
+    row.setdefault("message", "")
+    row.setdefault("check_id", "")
+    row.setdefault("severity", "LOW")
+    return row
+
+
+def _parse_migration_report_payload(data: dict[str, Any]) -> tuple[list[str], dict[str, Any]]:
+    """Turn schema_analyzer migration_impact_*.json into bullets + structured summary."""
+    mi = data.get("migration_impact")
+    if not isinstance(mi, dict):
+        mi = {}
+    verdict = mi.get("compatibility_verdict") or data.get("compatibility_verdict") or "UNKNOWN"
+    breaking = mi.get("breaking_fields") or data.get("breaking_fields") or []
+    if not isinstance(breaking, list):
+        breaking = []
+    rollback = str(mi.get("rollback_plan") or data.get("rollback_plan") or "")
+    checklist = mi.get("migration_checklist") or data.get("migration_checklist") or []
+    if not isinstance(checklist, list):
+        checklist = []
+
+    cid = str(data.get("contract_id") or "contract")
+    bullets: list[str] = [f"{cid}: compatibility_verdict={verdict}."]
+    for bf in breaking[:10]:
+        if isinstance(bf, str) and bf.strip():
+            bullets.append(f"{cid}: breaking field `{bf}`.")
+    for task in checklist[:6]:
+        if isinstance(task, dict):
+            t = str(task.get("task", "")).strip()
+            if t:
+                bullets.append(f"{cid}: migration task — {t}")
+    if rollback:
+        tail = "..." if len(rollback) > 280 else ""
+        bullets.append(f"{cid}: rollback — {rollback[:280]}{tail}")
+
+    summary: dict[str, Any] = {
+        "contract_id": data.get("contract_id"),
+        "compatibility_verdict": verdict,
+        "breaking_fields": breaking,
+        "rollback_plan": rollback,
+        "checklist_preview": checklist[:8],
+    }
+    return bullets[:14], summary
+
+
+def _load_migration_schema_section(
+    explicit: Path | None, root: Path
+) -> tuple[list[str], dict[str, Any] | None, str | None]:
+    """
+    Prefer explicit migration JSON; else latest validation_reports/migration_impact_*.json by mtime.
+    """
+    if explicit is not None:
+        p = explicit.expanduser().resolve()
+        if not p.is_file():
+            return [], None, str(p)
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            return [], None, str(p.resolve())
+        bullets, summary = _parse_migration_report_payload(data)
+        return bullets, summary, str(p.resolve())
+
+    pattern = str(root / "validation_reports" / "migration_impact_*.json")
+    matches = sorted(glob.glob(pattern), key=lambda x: Path(x).stat().st_mtime)
+    if not matches:
+        return [], None, None
+    p = Path(matches[-1])
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return [], None, str(p.resolve())
+    bullets, summary = _parse_migration_report_payload(data)
+    return bullets, summary, str(p.resolve())
+
+
 def _schema_diff_breaking_summary() -> list[str]:
     """
     Quick summary from the last two schema snapshots for week3/week5.
@@ -221,6 +302,7 @@ def generate_report(
     week5_report: Path | None = None,
     ai_metrics_path: Path | None = None,
     violations_path: Path | None = None,
+    migration_report: Path | None = None,
     strict_pdf: bool = False,
 ) -> dict[str, Any]:
     week3, w3_src = _load_json_explicit_or_glob(
@@ -231,6 +313,8 @@ def generate_report(
     )
 
     violations, viol_src = _load_violations_with_blame(violations_path)
+
+    mig_bullets, mig_summary, mig_src = _load_migration_schema_section(migration_report, _REPO)
 
     if ai_metrics_path is not None:
         amp = ai_metrics_path.expanduser().resolve()
@@ -254,6 +338,7 @@ def generate_report(
         "week5_validation": w5_src,
         "ai_metrics": ai_src,
         "violations": viol_src,
+        "migration_report": mig_src,
     }
 
     total_checks = 0
@@ -277,9 +362,19 @@ def generate_report(
     violations_this_week = []
     for v in violations:
         if v.get("type") == "llm_output_schema":
-            violations_this_week.append({"check_id": v.get("check_id"), "severity": "CRITICAL", "message": _describe_violation(v)})
+            violations_this_week.append(
+                _normalize_violation_row(
+                    {
+                        "check_id": v.get("check_id"),
+                        "severity": "CRITICAL",
+                        "type": "llm_output_schema",
+                        "message": v.get("message", ""),
+                        "field": "verdict_record",
+                    }
+                )
+            )
     for tv in top_violations:
-        violations_this_week.append(tv)
+        violations_this_week.append(_normalize_violation_row(tv))
     # De-dup + pick 3 by severity
     violations_this_week.sort(key=lambda x: _severity_rank(str(x.get("severity", "LOW"))))
     violations_this_week_final = []
@@ -293,7 +388,7 @@ def generate_report(
         if len(violations_this_week_final) >= 3:
             break
 
-    schema_changes = _schema_diff_breaking_summary()
+    schema_changes = mig_bullets if mig_bullets else _schema_diff_breaking_summary()
 
     ai_risk_parts = []
     emb = ai_metrics.get("embedding_drift") or {}
@@ -336,14 +431,14 @@ def generate_report(
         "violations_this_week": [
             {
                 "severity": v.get("severity"),
-                "description": _describe_violation({"check_id": v.get("check_id"), "type": v.get("type"), "message": v.get("message")})
-                if v.get("message")
-                else _describe_violation(v),
+                "description": _describe_violation(v),
                 "check_id": v.get("check_id"),
+                "field": v.get("field"),
             }
             for v in violations_this_week_final
         ],
         "schema_changes_detected": schema_changes,
+        "schema_evolution_summary": mig_summary,
         "ai_system_risk_assessment": ai_risk_parts,
         "recommended_actions": recommended_actions,
         "pdf_path": None,
@@ -458,6 +553,12 @@ def main() -> None:
     parser.add_argument("--ai-metrics", type=Path, default=None, help="Path to ai_metrics.json (default: validation_reports/ai_metrics.json).")
     parser.add_argument("--violations", type=Path, default=None, help="Violations JSONL (default: violations_with_blame or violations).")
     parser.add_argument(
+        "--migration-report",
+        type=Path,
+        default=None,
+        help="migration_impact_*.json from schema_analyzer (default: latest validation_reports/migration_impact_*.json).",
+    )
+    parser.add_argument(
         "--strict-pdf",
         action="store_true",
         help="Exit with code 1 if PDF generation fails (default: tolerate PDF errors).",
@@ -468,6 +569,7 @@ def main() -> None:
         week5_report=args.week5_report,
         ai_metrics_path=args.ai_metrics,
         violations_path=args.violations,
+        migration_report=args.migration_report,
         strict_pdf=args.strict_pdf,
     )
 

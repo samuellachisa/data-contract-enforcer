@@ -173,3 +173,70 @@ def test_schema_analyzer_nested_diff() -> None:
     assert d["compatibility_verdict"] == "BREAKING"
     fields = " ".join(str(c.get("field")) for c in d["breaking_changes"])
     assert "properties.c" in fields
+
+
+def test_parse_migration_report_payload() -> None:
+    from contracts.report_generator import _parse_migration_report_payload
+
+    data = {
+        "contract_id": "week3-document-refinery-extractions",
+        "migration_impact": {
+            "compatibility_verdict": "BREAKING",
+            "breaking_fields": ["extracted_facts.confidence"],
+            "rollback_plan": "Pin producer snapshot.",
+            "migration_checklist": [{"task": "Update consumer mappings", "owner": "data-team"}],
+        },
+    }
+    bullets, summary = _parse_migration_report_payload(data)
+    assert summary["compatibility_verdict"] == "BREAKING"
+    assert "extracted_facts.confidence" in summary["breaking_fields"]
+    assert any("BREAKING" in b for b in bullets)
+    assert any("rollback" in b.lower() for b in bullets)
+
+
+def test_normalize_violation_row() -> None:
+    from contracts.report_generator import _normalize_violation_row
+
+    r = _normalize_violation_row({"check_id": "week3.x", "severity": "HIGH"})
+    assert r["field"] == "*"
+    r2 = _normalize_violation_row({"type": "llm_output_schema", "check_id": "week2.verdict_record.schema"})
+    assert r2["field"] == "verdict_record"
+
+
+def test_load_migration_schema_section_explicit(tmp_path: Path) -> None:
+    from contracts.report_generator import _load_migration_schema_section
+
+    p = tmp_path / "migration_impact_test.json"
+    p.write_text(
+        json.dumps(
+            {
+                "contract_id": "demo-contract",
+                "migration_impact": {
+                    "compatibility_verdict": "BACKWARD_COMPATIBLE",
+                    "migration_checklist": [],
+                    "rollback_plan": "None needed.",
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    bullets, summary, src = _load_migration_schema_section(p, tmp_path)
+    assert summary is not None
+    assert summary["compatibility_verdict"] == "BACKWARD_COMPATIBLE"
+    assert src == str(p.resolve())
+    assert bullets
+
+
+def test_describe_violation_unknown_uses_message() -> None:
+    from contracts.report_generator import _describe_violation
+
+    text = _describe_violation(
+        {"check_id": "custom.check", "message": "Custom failure text.", "field": "col_a"}
+    )
+    assert text == "Custom failure text."
+
+
+def test_attributor_blame_cap_constant() -> None:
+    from contracts import attributor
+
+    assert attributor._MAX_BLAME_MERGE_RANKS >= 1

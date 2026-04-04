@@ -424,6 +424,10 @@ def _confidence_score(days_since_commit: float, hop_count: int) -> float:
     return max(0.0, round(base, 4))
 
 
+# Cap git blame subprocesses per violation (upstream list is already max 5).
+_MAX_BLAME_MERGE_RANKS = 5
+
+
 def attribute_violations(input_path: Path, output_path: Path) -> None:
     lineage = _load_latest_lineage(_REPO)
     nodes, edges = _index_lineage(lineage)
@@ -463,8 +467,11 @@ def attribute_violations(input_path: Path, output_path: Path) -> None:
             file_path = (_REPO / rel) if rel else (_REPO / "src" / "unknown.py")
 
             commit = _commit_for_file(file_path)
-            if rank == 1 and rel:
-                commit = _merge_blame_into_commit(_REPO, rel, str(v.get("check_id", "")), v.get("blame_hint"), commit)
+            # blame_hint (line range) applies to the primary producer only; other ranks use
+            # _default_blame_line_range(check_id) inside _merge_blame_into_commit.
+            if rel and rank <= _MAX_BLAME_MERGE_RANKS:
+                hint = v.get("blame_hint") if rank == 1 else None
+                commit = _merge_blame_into_commit(_REPO, rel, str(v.get("check_id", "")), hint, commit)
             days_since = float(commit.get("days_since_commit", 30.0))
             confidence_score = _confidence_score(days_since, hops)
 
