@@ -2,6 +2,9 @@
 """Generate sample JSONL outputs for Weeks 1-5 + LangSmith-style traces (TRP Week 7).
 
 Week 3 rows match the Document Refinery extraction contract (id: week3-document-refinery-extractions).
+`extraction_model` uses the TRP Week 3 canonical example (`claude-3-5-sonnet-20241022`) for seeded /
+fallback rows; when `capture_refinery_snapshot` + `snapshot_to_contract_payload` succeed, that value
+comes from the Week 3 repo export instead.
 
 When the Week 3 repo is present and data/*.pdf exist, each PDF is processed with the real refinery
 (profile_document + ExtractionRouter.route: fast_text / layout / vision per rubric) unless
@@ -22,6 +25,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "outputs"
+
+# TRP Week 3 extraction_record canonical example (challenge doc); contract expects claude-* or gpt-*.
+WEEK3_EXTRACTION_MODEL = "claude-3-5-sonnet-20241022"
 
 
 def iso_z(dt: datetime) -> str:
@@ -220,7 +226,7 @@ def _facts_entities_from_pdf_text(
         "page_ref": first_page,
         "source_excerpt": excerpt,
     }
-    return [fact], entities, "claude-seed-week3-pdf-text-v1"
+    return [fact], entities, WEEK3_EXTRACTION_MODEL
 
 
 def _facts_entities_pdf_unreadable(filename: str) -> tuple[list[dict], list[dict], str]:
@@ -252,7 +258,7 @@ def _facts_entities_pdf_unreadable(filename: str) -> tuple[list[dict], list[dict
         "page_ref": None,
         "source_excerpt": f"file={filename}",
     }
-    return [fact], entities, "claude-seed-week3-pdf-empty-v1"
+    return [fact], entities, WEEK3_EXTRACTION_MODEL
 
 
 def _facts_entities_fully_synthetic(i: int, entity_types: list[str]) -> tuple[list[dict], list[dict], str]:
@@ -284,7 +290,7 @@ def _facts_entities_fully_synthetic(i: int, entity_types: list[str]) -> tuple[li
         "page_ref": random.choice([None, 1, 2, 3, 4]),
         "source_excerpt": f"verbatim chunk {i} from page",
     }
-    return [fact], entities, "claude-3-5-sonnet-20241022"
+    return [fact], entities, WEEK3_EXTRACTION_MODEL
 
 
 def main() -> None:
