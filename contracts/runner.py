@@ -20,7 +20,7 @@ _REPO = Path(__file__).resolve().parents[1]
 if str(_REPO) not in sys.path:
     sys.path.insert(0, str(_REPO))
 
-from contracts.common import CheckResult, load_jsonl, load_yaml, repo_root
+from contracts.common import CheckResult, load_jsonl_with_issues, load_yaml, repo_root
 from contracts.validation_checks import (
     run_cross_system_validation,
     validate_langsmith_runs,
@@ -453,16 +453,75 @@ def validate_week5_events(rows: list[dict], contract: dict[str, Any], root: Path
     return results
 
 
-def validate_generic_missing_column(contract: dict[str, Any]) -> list[CheckResult]:
-    """Emit ERROR rows for columns referenced in contract schema but not implemented for this runner."""
-    return []
+def _ingest_check_results(issues: list[dict[str, Any]]) -> list[CheckResult]:
+    out: list[CheckResult] = []
+    for iss in issues:
+        ln = int(iss.get("line_no", 0))
+        kind = str(iss.get("kind", "unknown"))
+        detail = str(iss.get("detail", ""))
+        out.append(
+            CheckResult(
+                check_id=f"runner.jsonl.line_{ln}",
+                column_name="*",
+                check_type="ingest",
+                status="ERROR",
+                actual_value=f"{kind}@{ln}",
+                expected="valid_json_object_per_line",
+                severity="HIGH",
+                records_failing=1,
+                sample_failing=[detail[:200]] if detail else [],
+                message=f"JSONL ingest error (line {ln}): {kind} — {detail}",
+            )
+        )
+    return out
+
+
+def validate_generic_missing_column(
+    contract: dict[str, Any], rows: list[dict[str, Any]], *, sample_size: int = 200
+) -> list[CheckResult]:
+    """Top-level required fields from contract schema: FAIL if any sampled row is missing the key or value is None."""
+    out: list[CheckResult] = []
+    schema = contract.get("schema")
+    if not isinstance(schema, dict):
+        return out
+    sample = rows[:sample_size] if rows else []
+    for field_name, spec in schema.items():
+        if not isinstance(spec, dict) or not spec.get("required"):
+            continue
+        missing = 0
+        samples: list[str] = []
+        for r in sample:
+            if field_name not in r or r.get(field_name) is None:
+                missing += 1
+                pk = r.get("doc_id") or r.get("event_id") or r.get("verdict_id") or r.get("node_id")
+                if pk is not None and len(samples) < 5:
+                    samples.append(str(pk))
+        st = "FAIL" if missing else "PASS"
+        out.append(
+            CheckResult(
+                check_id=f"runner.schema.required.{field_name}",
+                column_name=field_name,
+                check_type="required_field",
+                status=st,
+                actual_value=f"missing_or_null_in_{missing}_of_{len(sample)}_sampled_rows",
+                expected="present_non_null",
+                severity="CRITICAL" if missing else "LOW",
+                records_failing=missing,
+                sample_failing=samples,
+                message=f"Contract schema marks `{field_name}` required; {missing} sampled row(s) lack a non-null value.",
+            )
+        )
+    return out
 
 
 def run_validation(contract_path: Path, data_path: Path, output_path: Path | None, root: Path) -> dict[str, Any]:
     contract = load_yaml(contract_path)
-    rows = load_jsonl(data_path)
+    rows, ingest_issues = load_jsonl_with_issues(data_path)
     cid = contract.get("id", "unknown")
     snap = _jsonl_snapshot_id(data_path)
+
+    ingest_checks = _ingest_check_results(ingest_issues)
+    required_checks = validate_generic_missing_column(contract, rows)
 
     if "week3" in cid or "extraction" in cid:
         checks = validate_week3_extractions(rows, contract, root)
@@ -477,7 +536,7 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
     elif "week5" in cid or "event-sourcing" in cid:
         checks = validate_week5_events(rows, contract, root)
     else:
-        checks = validate_generic_missing_column(contract)
+        checks = []
         checks.append(
             CheckResult(
                 check_id="runner.unsupported_contract",
@@ -492,6 +551,8 @@ def run_validation(contract_path: Path, data_path: Path, output_path: Path | Non
                 message="No validation logic for this contract id.",
             )
         )
+
+    checks = ingest_checks + required_checks + checks
 
     passed = sum(1 for c in checks if c.status == "PASS")
     failed = sum(1 for c in checks if c.status == "FAIL")

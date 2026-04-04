@@ -1,12 +1,24 @@
 """
 ContractRegistry (Tier 1): load contract_registry/subscriptions.yaml and query subscribers.
+
+Tier-1 blast radius lists explicit downstream subscribers from YAML. ViolationAttributor merges
+this with Tier-2 lineage-derived reachability; see explain_subscription_blast().
 """
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 
-from contracts.common import load_yaml
+_REPO_BOOT = Path(__file__).resolve().parents[1]
+if str(_REPO_BOOT) not in sys.path:
+    sys.path.insert(0, str(_REPO_BOOT))
+
+import yaml
+
+from contracts.common import load_yaml, repo_root
+
+_VALIDATION_MODES = frozenset({"AUDIT", "WARN", "ENFORCE"})
 
 
 def registry_path(root: Path) -> Path:
@@ -86,6 +98,113 @@ def subscribers_for_violation(
     return out
 
 
+def discovered_contract_ids(root: Path) -> set[str]:
+    """Contract `id` values from generated_contracts/*.yaml (after generator run)."""
+    out: set[str] = set()
+    gdir = root / "generated_contracts"
+    if not gdir.is_dir():
+        return out
+    for p in gdir.glob("*.yaml"):
+        try:
+            data = yaml.safe_load(p.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if isinstance(data, dict) and data.get("id"):
+            out.add(str(data["id"]))
+    return out
+
+
+def validate_subscriptions(
+    root: Path, *, require_known_contract_ids: bool = True
+) -> tuple[bool, list[str]]:
+    """
+    Validate subscriptions.yaml shape and optional cross-check against generated_contracts/*.yaml.
+    Returns (ok, messages) where messages include notes and any validation errors.
+    """
+    lines: list[str] = []
+    bad = 0
+
+    known: set[str] = set()
+    if require_known_contract_ids:
+        known = discovered_contract_ids(root)
+        if not known:
+            lines.append(
+                "registry: note: no generated_contracts/*.yaml ids found; contract_id cross-check skipped."
+            )
+
+    subs = load_subscriptions(root)
+    if not subs:
+        lines.append("registry: subscriptions list is empty or file missing.")
+        return False, lines
+
+    for i, sub in enumerate(subs):
+        prefix = f"registry: subscription[{i}]"
+        if not isinstance(sub, dict):
+            lines.append(f"{prefix}: expected mapping, got {type(sub).__name__}.")
+            bad += 1
+            continue
+        cid = str(sub.get("contract_id", "")).strip()
+        if not cid:
+            lines.append(f"{prefix}: missing contract_id.")
+            bad += 1
+        elif known and cid not in known:
+            lines.append(f"{prefix}: contract_id {cid!r} not found in generated_contracts/*.yaml.")
+            bad += 1
+        sid = str(sub.get("subscriber_id", "")).strip()
+        if not sid:
+            lines.append(f"{prefix}: missing subscriber_id.")
+            bad += 1
+        team = str(sub.get("subscriber_team", "")).strip()
+        if not team:
+            lines.append(f"{prefix}: missing subscriber_team.")
+            bad += 1
+        fc = sub.get("fields_consumed")
+        if not isinstance(fc, list) or not fc or not all(isinstance(x, str) and x.strip() for x in fc):
+            lines.append(f"{prefix}: fields_consumed must be a non-empty list of non-empty strings.")
+            bad += 1
+        mode = str(sub.get("validation_mode", "")).strip().upper()
+        if mode not in _VALIDATION_MODES:
+            lines.append(
+                f"{prefix}: validation_mode must be one of {sorted(_VALIDATION_MODES)}, got {sub.get('validation_mode')!r}."
+            )
+            bad += 1
+        contact = str(sub.get("contact", "")).strip()
+        if not contact:
+            lines.append(f"{prefix}: missing contact.")
+            bad += 1
+        bfs = sub.get("breaking_fields")
+        if not isinstance(bfs, list) or not bfs:
+            lines.append(f"{prefix}: breaking_fields must be a non-empty list.")
+            bad += 1
+        else:
+            for j, bf in enumerate(bfs):
+                if not isinstance(bf, dict):
+                    lines.append(f"{prefix}: breaking_fields[{j}] must be an object.")
+                    bad += 1
+                    continue
+                fld = str(bf.get("field", "")).strip()
+                if not fld:
+                    lines.append(f"{prefix}: breaking_fields[{j}].field is required.")
+                    bad += 1
+                reason = str(bf.get("reason", "")).strip()
+                if not reason:
+                    lines.append(f"{prefix}: breaking_fields[{j}].reason is required.")
+                    bad += 1
+
+    return bad == 0, lines
+
+
+def explain_subscription_blast(sub: dict[str, Any]) -> str:
+    """Plain-language note: Tier-1 registry vs Tier-2 lineage blast radius."""
+    sid = sub.get("subscriber_id", "?")
+    cid = sub.get("contract_id", "?")
+    fc = sub.get("fields_consumed") or []
+    return (
+        f"Tier-1 registry: consumer `{sid}` depends on contract `{cid}` (fields consumed: {list(fc)}). "
+        "ViolationAttributor augments blast radius using lineage graphs (Tier-2) for affected files and pipelines."
+    )
+
+
 def subscriber_summary_entries(subscribers: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Serializable blast_radius.subscribers list."""
     rows: list[dict[str, Any]] = []
@@ -102,3 +221,14 @@ def subscriber_summary_entries(subscribers: list[dict[str, Any]]) -> list[dict[s
             }
         )
     return rows
+
+
+def main() -> None:
+    ok, lines = validate_subscriptions(repo_root())
+    for line in lines:
+        print(line, file=sys.stderr if not ok else sys.stdout)
+    raise SystemExit(0 if ok else 1)
+
+
+if __name__ == "__main__":
+    main()

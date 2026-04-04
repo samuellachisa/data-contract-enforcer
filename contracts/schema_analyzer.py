@@ -63,12 +63,150 @@ def _extract_schema_def(snapshot: dict[str, Any]) -> dict[str, Any]:
     return snapshot.get("schema", {}) or {}
 
 
+def _is_contract_style_schema(sch: dict[str, Any]) -> bool:
+    """
+    Exclude rows-only inferred snapshots ({types: [...]}) so evolution diffs use Bitol/JSON-Schema shapes.
+    """
+    if not isinstance(sch, dict) or not sch:
+        return True
+    for v in sch.values():
+        if isinstance(v, dict) and "types" in v and "type" not in v:
+            return False
+    return True
+
+
+def _filter_contract_snapshots(dirs: list[Path]) -> list[Path]:
+    kept: list[Path] = []
+    for d in dirs:
+        try:
+            obj = _yaml_to_dict(d / "schema.yaml")
+            sch = obj.get("schema") or {}
+            if _is_contract_style_schema(sch):
+                kept.append(d)
+        except Exception:
+            kept.append(d)
+    return kept if len(kept) >= 2 else dirs
+
+
+def _diff_field_specs(
+    da: Any,
+    db: Any,
+    path: str,
+    type_changes: list[dict[str, Any]],
+    breaking_changes: list[dict[str, Any]],
+    compatible_changes: list[dict[str, Any]],
+) -> None:
+    """Recursive diff on JSON-Schema-like field definition dicts."""
+    if not isinstance(da, dict) or not isinstance(db, dict):
+        if da != db:
+            breaking_changes.append(
+                {
+                    "change_type": "Schema node structure change (breaking)",
+                    "field": path or "<root>",
+                    "from": repr(da)[:120],
+                    "to": repr(db)[:120],
+                }
+            )
+        return
+
+    if da.get("type") != db.get("type"):
+        type_changes.append({"field": path, "from": da.get("type"), "to": db.get("type")})
+        breaking_changes.append(
+            {
+                "change_type": "Change type (breaking)",
+                "field": path,
+                "from": da.get("type"),
+                "to": db.get("type"),
+            }
+        )
+
+    if da.get("required") != db.get("required"):
+        breaking_changes.append(
+            {
+                "change_type": "Requiredness change (breaking)",
+                "field": path,
+                "from": da.get("required"),
+                "to": db.get("required"),
+            }
+        )
+
+    for attr in ("format", "pattern"):
+        if da.get(attr) != db.get(attr) and (da.get(attr) is not None or db.get(attr) is not None):
+            breaking_changes.append(
+                {
+                    "change_type": f"{attr} change (breaking)",
+                    "field": path,
+                    "from": da.get(attr),
+                    "to": db.get(attr),
+                }
+            )
+
+    for attr in ("minimum", "maximum", "minLength", "maxLength", "minItems", "maxItems"):
+        if da.get(attr) != db.get(attr):
+            breaking_changes.append(
+                {
+                    "change_type": f"{attr} change (breaking)",
+                    "field": path,
+                    "from": da.get(attr),
+                    "to": db.get(attr),
+                }
+            )
+
+    ea, eb = da.get("enum"), db.get("enum")
+    if isinstance(ea, list) and isinstance(eb, list):
+        if set(map(str, ea)) != set(map(str, eb)):
+            breaking_changes.append(
+                {
+                    "change_type": "Enum change (breaking)",
+                    "field": path,
+                    "from": ea,
+                    "to": eb,
+                }
+            )
+    elif ea != eb and (ea is not None or eb is not None):
+        breaking_changes.append(
+            {
+                "change_type": "Enum change (breaking)",
+                "field": path,
+                "from": ea,
+                "to": eb,
+            }
+        )
+
+    pa, pb = da.get("properties"), db.get("properties")
+    if isinstance(pa, dict) and isinstance(pb, dict):
+        for pk in sorted(set(pa.keys()) | set(pb.keys())):
+            sub = f"{path}.properties.{pk}" if path else f"properties.{pk}"
+            if pk not in pa:
+                nb = pb[pk]
+                is_req = bool(isinstance(nb, dict) and nb.get("required"))
+                if is_req:
+                    breaking_changes.append(
+                        {"change_type": "Add nested required property (breaking)", "field": sub, "verdict": "BREAKING"}
+                    )
+                else:
+                    compatible_changes.append(
+                        {
+                            "change_type": "Add nested nullable property",
+                            "field": sub,
+                            "verdict": "BACKWARD_COMPATIBLE",
+                        }
+                    )
+            elif pk not in pb:
+                breaking_changes.append({"change_type": "Remove nested property (breaking)", "field": sub})
+            else:
+                _diff_field_specs(pa[pk], pb[pk], sub, type_changes, breaking_changes, compatible_changes)
+
+    ia, ib = da.get("items"), db.get("items")
+    if isinstance(ia, dict) and isinstance(ib, dict):
+        items_path = f"{path}.items" if path else "items"
+        _diff_field_specs(ia, ib, items_path, type_changes, breaking_changes, compatible_changes)
+
+
 def _diff_schemas(schema_a: dict[str, Any], schema_b: dict[str, Any]) -> dict[str, Any]:
     """
-    Very small diff engine tuned to the Week 7 generator snapshots.
-    Supports:
-    - key add/remove
-    - type change on a field definition that includes a "type"
+    Diff engine for generator snapshots: top-level record fields plus nested JSON-Schema
+    (properties, items, constraints).
     """
     keys_a = set(schema_a.keys())
     keys_b = set(schema_b.keys())
@@ -81,32 +219,20 @@ def _diff_schemas(schema_a: dict[str, Any], schema_b: dict[str, Any]) -> dict[st
     type_changes: list[dict[str, Any]] = []
 
     for k in changed:
-        da = schema_a.get(k, {})
-        db = schema_b.get(k, {})
-        if isinstance(da, dict) and isinstance(db, dict) and da.get("type") != db.get("type"):
-            type_changes.append({"field": k, "from": da.get("type"), "to": db.get("type")})
-            # Narrowing rule: treat any non-None type change as breaking for our demo.
+        da = schema_a.get(k)
+        db = schema_b.get(k)
+        if isinstance(da, dict) and isinstance(db, dict):
+            _diff_field_specs(da, db, k, type_changes, breaking_changes, compatible_changes)
+        elif da != db:
             breaking_changes.append(
                 {
-                    "change_type": "Change type (breaking)",
+                    "change_type": "Top-level field replace (breaking)",
                     "field": k,
-                    "from": da.get("type"),
-                    "to": db.get("type"),
+                    "from": repr(da)[:120],
+                    "to": repr(db)[:120],
                 }
             )
-        elif isinstance(da, dict) and isinstance(db, dict):
-            # required toggle could be modeled; for simplicity we treat required changes as breaking.
-            if da.get("required") != db.get("required"):
-                breaking_changes.append(
-                    {
-                        "change_type": "Requiredness change (breaking)",
-                        "field": k,
-                        "from": da.get("required"),
-                        "to": db.get("required"),
-                    }
-                )
 
-    # Additions are usually compatible if required is False or absent.
     for k in added:
         db = schema_b.get(k, {})
         is_required = bool(db.get("required")) if isinstance(db, dict) else False
@@ -115,9 +241,7 @@ def _diff_schemas(schema_a: dict[str, Any], schema_b: dict[str, Any]) -> dict[st
                 {"change_type": "Add nullable column", "field": k, "verdict": "BACKWARD_COMPATIBLE"}
             )
         else:
-            breaking_changes.append(
-                {"change_type": "Add non-nullable column", "field": k, "verdict": "BREAKING"}
-            )
+            breaking_changes.append({"change_type": "Add non-nullable column", "field": k, "verdict": "BREAKING"})
 
     for k in removed:
         breaking_changes.append({"change_type": "Remove column", "field": k, "verdict": "BREAKING"})
@@ -146,9 +270,15 @@ def _migration_impact_report(diff: dict[str, Any], contract_id: str) -> dict[str
             "diff": diff,
         }
 
-    breaking_fields = [c.get("field") for c in diff.get("breaking_changes", []) if c.get("field")]
+    breaking_fields: list[str] = []
+    seen_bf: set[str] = set()
+    for c in diff.get("breaking_changes", []) or []:
+        f = c.get("field")
+        if isinstance(f, str) and f and f not in seen_bf:
+            seen_bf.add(f)
+            breaking_fields.append(f)
     checklist = []
-    for f in breaking_fields[:6]:
+    for f in breaking_fields[:12]:
         checklist.append(
             {
                 "task": f"Update downstream consumer mappings for `{f}` to match the new contract field type/requiredness.",
@@ -180,7 +310,7 @@ def main() -> None:
 
     schema_dir = _REPO / "schema_snapshots" / args.contract_id
     since_td = _parse_since(args.since)
-    snapshots = _list_snapshots(schema_dir)
+    snapshots = _filter_contract_snapshots(_list_snapshots(schema_dir))
 
     if not snapshots:
         raise SystemExit(f"No snapshots found for contract_id={args.contract_id} in {schema_dir}")
@@ -220,7 +350,10 @@ def main() -> None:
         "snapshot_b": filtered[-1].name if not args.snapshot_b else args.snapshot_b.name,
         "diff": diff,
         "migration_impact": impact,
-        "classification_taxonomy_used": "subset: type change and requiredness changes treated as breaking.",
+        "classification_taxonomy_used": (
+            "nested JSON-Schema diff: type/required/format/pattern/min/max/enum/minItems/maxItems; "
+            "nested properties/items; top-level add/remove; breaking vs compatible adds."
+        ),
     }
 
     args.output.parent.mkdir(parents=True, exist_ok=True)

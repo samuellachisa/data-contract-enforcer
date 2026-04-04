@@ -10,7 +10,7 @@ from typing import Any, Callable
 
 import numpy as np
 
-from contracts.common import load_jsonl
+from contracts.common import load_jsonl_with_issues
 
 UUID_RE = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$",
@@ -774,10 +774,10 @@ def run_cross_system_validation(root: Path) -> dict[str, Any]:
     def _iso_now() -> str:
         return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
-    intents = load_jsonl(root / "outputs" / "week1" / "intent_records.jsonl")
-    verdicts = load_jsonl(root / "outputs" / "week2" / "verdicts.jsonl")
-    extractions = load_jsonl(root / "outputs" / "week3" / "extractions.jsonl")
-    lineage_rows = load_jsonl(root / "outputs" / "week4" / "lineage_snapshots.jsonl")
+    intents, i1 = load_jsonl_with_issues(root / "outputs" / "week1" / "intent_records.jsonl")
+    verdicts, i2 = load_jsonl_with_issues(root / "outputs" / "week2" / "verdicts.jsonl")
+    extractions, i3 = load_jsonl_with_issues(root / "outputs" / "week3" / "extractions.jsonl")
+    lineage_rows, i4 = load_jsonl_with_issues(root / "outputs" / "week4" / "lineage_snapshots.jsonl")
 
     results: list[CheckResult] = []
 
@@ -807,6 +807,29 @@ def run_cross_system_validation(root: Path) -> dict[str, Any]:
                 message=msg,
             )
         )
+
+    for label, issues in (
+        ("week1_intents", i1),
+        ("week2_verdicts", i2),
+        ("week3_extractions", i3),
+        ("week4_lineage", i4),
+    ):
+        for iss in issues:
+            ln = int(iss.get("line_no", 0))
+            kind = str(iss.get("kind", ""))
+            detail = str(iss.get("detail", ""))[:200]
+            add(
+                f"cross.ingest.{label}.line_{ln}",
+                "*",
+                "ingest",
+                "ERROR",
+                f"{kind}@{ln}",
+                "valid_json_object_per_line",
+                "HIGH",
+                1,
+                [detail] if detail else [],
+                f"Cross-validation JSONL ingest ({label} line {ln}): {kind} — {detail}",
+            )
 
     intent_files: set[str] = set()
     for r in intents:

@@ -103,6 +103,15 @@ lineage:
     breaking_if_changed:
     - payload
     - event_type
+profiling:
+  ingest:
+    jsonl_lines_accepted: 55
+    jsonl_lines_rejected: 0
+    issue_sample: []
+    type_anomalies:
+      payload_non_object_count: 0
+      sequence_number_non_int_count: 0
+      metadata_non_object_count: 0
 llm_annotations:
   column: payload.bytes
   table: events

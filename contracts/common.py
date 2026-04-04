@@ -45,7 +45,40 @@ def repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
 
+def load_jsonl_with_issues(path: Path) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """
+    Parse JSONL tolerating bad lines. Skips blank lines and lines starting with # or //.
+    Each issue: line_no, kind (json_decode | not_object), detail.
+    """
+    rows: list[dict[str, Any]] = []
+    issues: list[dict[str, Any]] = []
+    with path.open(encoding="utf-8") as f:
+        for line_no, raw in enumerate(f, start=1):
+            line = raw.strip()
+            if not line:
+                continue
+            if line.startswith("#") or line.startswith("//"):
+                continue
+            try:
+                obj = json.loads(line)
+            except json.JSONDecodeError as exc:
+                issues.append({"line_no": line_no, "kind": "json_decode", "detail": str(exc)})
+                continue
+            if not isinstance(obj, dict):
+                issues.append(
+                    {
+                        "line_no": line_no,
+                        "kind": "not_object",
+                        "detail": f"expected object, got {type(obj).__name__}",
+                    }
+                )
+                continue
+            rows.append(obj)
+    return rows, issues
+
+
 def load_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Strict JSONL: raises on first invalid line (unchanged semantics; no comment skipping)."""
     rows: list[dict[str, Any]] = []
     with path.open(encoding="utf-8") as f:
         for line in f:

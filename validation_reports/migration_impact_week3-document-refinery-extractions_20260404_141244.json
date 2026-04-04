@@ -1,0 +1,67 @@
+{
+  "contract_id": "week3-document-refinery-extractions",
+  "generated_at": "2026-04-04T14:12:44Z",
+  "human_readable_diff": "{\n  \"added\": [\n    \"notes\"\n  ],\n  \"removed\": [],\n  \"type_changes\": [\n    {\n      \"field\": \"extracted_facts\",\n      \"from\": \"array\",\n      \"to\": \"object\"\n    }\n  ],\n  \"breaking_changes\": [\n    {\n      \"change_type\": \"Change type (breaking)\",\n      \"field\": \"extracted_facts\",\n      \"from\": \"array\",\n      \"to\": \"object\"\n    }\n  ],\n  \"compatible_changes\": [\n    {\n      \"change_type\": \"Add nullable column\",\n      \"field\": \"notes\",\n      \"verdict\": \"BACKWARD_COMPATIBLE\"\n    }\n  ],\n  \"compatibility_verdict\": \"BREAKING\"\n}",
+  "compatibility_verdict": "BREAKING",
+  "migration_impact": {
+    "contract_id": "week3-document-refinery-extractions",
+    "compatibility_verdict": "BREAKING",
+    "breaking_fields": [
+      "extracted_facts"
+    ],
+    "diff": {
+      "added": [
+        "notes"
+      ],
+      "removed": [],
+      "type_changes": [
+        {
+          "field": "extracted_facts",
+          "from": "array",
+          "to": "object"
+        }
+      ],
+      "breaking_changes": [
+        {
+          "change_type": "Change type (breaking)",
+          "field": "extracted_facts",
+          "from": "array",
+          "to": "object"
+        }
+      ],
+      "compatible_changes": [
+        {
+          "change_type": "Add nullable column",
+          "field": "notes",
+          "verdict": "BACKWARD_COMPATIBLE"
+        }
+      ],
+      "compatibility_verdict": "BREAKING"
+    },
+    "migration_checklist": [
+      {
+        "task": "Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+        "owner": "downstream-team"
+      }
+    ],
+    "rollback_plan": "Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete."
+  },
+  "rollback_plan": "Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete.",
+  "migration_checklist": [
+    {
+      "task": "Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+      "owner": "downstream-team"
+    }
+  ],
+  "blast_radius_note": "See outputs/week4/lineage_snapshots.jsonl downstream consumers in generated contracts lineage sections.",
+  "per_consumer_failure_modes": [
+    {
+      "consumer": "week7-validation-runner",
+      "failure_mode": "Validation checks keyed on field types and required flags will ERROR or FAIL."
+    },
+    {
+      "consumer": "week7-violation-attributor",
+      "failure_mode": "Blast radius may omit new nodes until lineage graph is regenerated."
+    }
+  ]
+}

@@ -26,7 +26,7 @@ if str(_REPO) not in sys.path:
 from contracts.common import (
     iso_now,
     jsonl_snapshot_id,
-    load_jsonl,
+    load_jsonl_with_issues,
     repo_root,
     write_yaml,
 )
@@ -89,8 +89,57 @@ def _load_latest_lineage(root: Path) -> dict[str, Any] | None:
     path = root / "outputs" / "week4" / "lineage_snapshots.jsonl"
     if not path.exists():
         return None
-    rows = load_jsonl(path)
+    rows, _issues = load_jsonl_with_issues(path)
     return rows[-1] if rows else None
+
+
+def _ingest_block(issues: list[dict[str, Any]], accepted: int) -> dict[str, Any]:
+    return {
+        "jsonl_lines_accepted": accepted,
+        "jsonl_lines_rejected": len(issues),
+        "issue_sample": issues[:8],
+    }
+
+
+def _week3_ingest_anomalies(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    non_numeric_conf = 0
+    wrong_ef_type = 0
+    for r in rows:
+        ef = r.get("extracted_facts")
+        if ef is not None and not isinstance(ef, list):
+            wrong_ef_type += 1
+            continue
+        for f in ef or []:
+            if not isinstance(f, dict):
+                continue
+            c = f.get("confidence")
+            if c is not None and not isinstance(c, (int, float)):
+                non_numeric_conf += 1
+    return {
+        "extracted_facts_confidence_non_numeric_count": non_numeric_conf,
+        "extracted_facts_wrong_type_row_count": wrong_ef_type,
+    }
+
+
+def _week5_ingest_anomalies(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    bad_payload = 0
+    bad_seq = 0
+    bad_meta = 0
+    for r in rows:
+        pl = r.get("payload")
+        if pl is not None and not isinstance(pl, dict):
+            bad_payload += 1
+        sn = r.get("sequence_number")
+        if sn is not None and not isinstance(sn, int):
+            bad_seq += 1
+        md = r.get("metadata")
+        if md is not None and not isinstance(md, dict):
+            bad_meta += 1
+    return {
+        "payload_non_object_count": bad_payload,
+        "sequence_number_non_int_count": bad_seq,
+        "metadata_non_object_count": bad_meta,
+    }
 
 
 def _downstream_for_dataset(lineage: dict[str, Any] | None, dataset_hint: str) -> list[dict[str, Any]]:
@@ -338,7 +387,9 @@ def _maybe_llm_annotate(
     return _llm_annotations_stub(column, table, samples, neighbors, profile=profile)
 
 
-def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
+def build_week3_contract(
+    rows: list[dict], root: Path, *, ingest: dict[str, Any] | None = None
+) -> dict[str, Any]:
     lineage = _load_latest_lineage(root)
     df_flat = _flatten_extractions_for_profile(rows)
     profile = _ydata_profile_summary(df_flat)
@@ -526,6 +577,7 @@ def build_week3_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "flat_row_count": int(len(df_flat)),
             "confidence_numeric_profile": conf_stats,
             "processing_time_ms_stats": _numeric_stats([float(x) for x in proc_ms]) if proc_ms else {},
+            **({"ingest": ingest} if ingest else {}),
         },
         "llm_annotations": llm_block,
     }
@@ -618,7 +670,9 @@ def _write_week3_dbt(out_dir: Path) -> None:
     )
 
 
-def build_week5_contract(rows: list[dict], root: Path) -> dict[str, Any]:
+def build_week5_contract(
+    rows: list[dict], root: Path, *, ingest: dict[str, Any] | None = None
+) -> dict[str, Any]:
     lineage = _load_latest_lineage(root)
     downstream = _downstream_for_dataset(lineage, "week5")
     if not downstream:
@@ -701,6 +755,9 @@ def build_week5_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             },
         },
         "lineage": {"upstream": [], "downstream": downstream},
+        "profiling": {
+            **({"ingest": ingest} if ingest else {}),
+        },
         "llm_annotations": _maybe_llm_annotate(
             "payload.bytes",
             "events",
@@ -1044,16 +1101,24 @@ def run_single_source(source: Path, out_dir: Path, root: Path) -> None:
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     name = source.name.lower()
-    rows = load_jsonl(source)
+    rows, issues = load_jsonl_with_issues(source)
 
     if "extraction" in name or "week3" in str(source).replace("\\", "/"):
-        contract = build_week3_contract(rows, root)
+        ingest_w3 = {
+            **_ingest_block(issues, len(rows)),
+            "type_anomalies": _week3_ingest_anomalies(rows),
+        }
+        contract = build_week3_contract(rows, root, ingest=ingest_w3)
         write_yaml(out_dir / "week3_extractions.yaml", contract)
         _write_week3_dbt(out_dir)
         _write_schema_snapshot(contract["id"], contract.get("schema", {}), root)
         _write_schema_snapshot(contract["id"], _infer_simple_schema_from_rows(rows), root)
     elif "event" in name or "week5" in str(source).replace("\\", "/"):
-        contract = build_week5_contract(rows, root)
+        ingest_w5 = {
+            **_ingest_block(issues, len(rows)),
+            "type_anomalies": _week5_ingest_anomalies(rows),
+        }
+        contract = build_week5_contract(rows, root, ingest=ingest_w5)
         write_yaml(out_dir / "week5_events.yaml", contract)
         _write_week5_dbt(out_dir)
         _write_event_payload_schema(root)
@@ -1067,30 +1132,32 @@ def run_single_source(source: Path, out_dir: Path, root: Path) -> None:
 
 def run_all(root: Path, out_dir: Path) -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
-    w1 = load_jsonl(root / "outputs" / "week1" / "intent_records.jsonl")
+    w1, _i1 = load_jsonl_with_issues(root / "outputs" / "week1" / "intent_records.jsonl")
     write_yaml(out_dir / "week1_intent_records.yaml", build_week1_contract(w1, root))
 
-    w2 = load_jsonl(root / "outputs" / "week2" / "verdicts.jsonl")
+    w2, _i2 = load_jsonl_with_issues(root / "outputs" / "week2" / "verdicts.jsonl")
     write_yaml(out_dir / "week2_verdicts.yaml", build_week2_contract(w2, root))
 
-    w3 = load_jsonl(root / "outputs" / "week3" / "extractions.jsonl")
-    write_yaml(out_dir / "week3_extractions.yaml", build_week3_contract(w3, root))
+    w3, i3 = load_jsonl_with_issues(root / "outputs" / "week3" / "extractions.jsonl")
+    ingest_w3 = {**_ingest_block(i3, len(w3)), "type_anomalies": _week3_ingest_anomalies(w3)}
+    write_yaml(out_dir / "week3_extractions.yaml", build_week3_contract(w3, root, ingest=ingest_w3))
     _write_week3_dbt(out_dir)
 
-    w5 = load_jsonl(root / "outputs" / "week5" / "events.jsonl")
-    write_yaml(out_dir / "week5_events.yaml", build_week5_contract(w5, root))
+    w5, i5 = load_jsonl_with_issues(root / "outputs" / "week5" / "events.jsonl")
+    ingest_w5 = {**_ingest_block(i5, len(w5)), "type_anomalies": _week5_ingest_anomalies(w5)}
+    write_yaml(out_dir / "week5_events.yaml", build_week5_contract(w5, root, ingest=ingest_w5))
     _write_week5_dbt(out_dir)
     _write_event_payload_schema(root)
 
-    w4 = load_jsonl(root / "outputs" / "week4" / "lineage_snapshots.jsonl")
+    w4, _i4 = load_jsonl_with_issues(root / "outputs" / "week4" / "lineage_snapshots.jsonl")
     write_yaml(out_dir / "week4_lineage.yaml", build_week4_contract(w4, root))
 
-    tr = load_jsonl(root / "outputs" / "traces" / "runs.jsonl")
+    tr, _it = load_jsonl_with_issues(root / "outputs" / "traces" / "runs.jsonl")
     write_yaml(out_dir / "langsmith_traces.yaml", build_langsmith_contract(tr, root))
 
     for cid, sch in [
-        ("week3-document-refinery-extractions", build_week3_contract(w3, root).get("schema", {})),
-        ("week5-event-sourcing-events", build_week5_contract(w5, root).get("schema", {})),
+        ("week3-document-refinery-extractions", build_week3_contract(w3, root, ingest=ingest_w3).get("schema", {})),
+        ("week5-event-sourcing-events", build_week5_contract(w5, root, ingest=ingest_w5).get("schema", {})),
         ("week4-brownfield-lineage-snapshots", build_week4_contract(w4, root).get("schema", {})),
     ]:
         _write_schema_snapshot(cid, sch, root)

@@ -22,11 +22,23 @@ def _now_date() -> str:
     return datetime.now(timezone.utc).strftime("%Y%m%d")
 
 
-def _load_latest_json(path_glob: str) -> dict[str, Any] | None:
+def _load_latest_json_with_path(path_glob: str) -> tuple[dict[str, Any] | None, str | None]:
     matches = sorted(glob.glob(path_glob), key=lambda p: Path(p).stat().st_mtime)
     if not matches:
-        return None
-    return json.loads(Path(matches[-1]).read_text(encoding="utf-8"))
+        return None, None
+    p = Path(matches[-1])
+    return json.loads(p.read_text(encoding="utf-8")), str(p.resolve())
+
+
+def _load_json_explicit_or_glob(
+    explicit: Path | None, path_glob: str
+) -> tuple[dict[str, Any] | None, str | None]:
+    if explicit is not None:
+        p = explicit.expanduser().resolve()
+        if not p.is_file():
+            return None, str(p)
+        return json.loads(p.read_text(encoding="utf-8")), str(p)
+    return _load_latest_json_with_path(path_glob)
 
 
 def _severity_rank(sev: str) -> int:
@@ -34,10 +46,7 @@ def _severity_rank(sev: str) -> int:
     return order.get(sev, 99)
 
 
-def _load_violations_with_blame() -> list[dict[str, Any]]:
-    p = _REPO / "violation_log" / "violations_with_blame.jsonl"
-    if not p.exists():
-        p = _REPO / "violation_log" / "violations.jsonl"
+def _load_violations_from_path(p: Path) -> list[dict[str, Any]]:
     rows: list[dict[str, Any]] = []
     with p.open("r", encoding="utf-8") as f:
         for line in f:
@@ -46,6 +55,36 @@ def _load_violations_with_blame() -> list[dict[str, Any]]:
                 continue
             rows.append(json.loads(line))
     return rows
+
+
+def _load_violations_with_blame(explicit: Path | None = None) -> tuple[list[dict[str, Any]], str | None]:
+    if explicit is not None:
+        p = explicit.expanduser().resolve()
+        if p.is_file():
+            return _load_violations_from_path(p), str(p)
+        return [], str(p)
+    p = _REPO / "violation_log" / "violations_with_blame.jsonl"
+    if not p.exists():
+        p = _REPO / "violation_log" / "violations.jsonl"
+    if not p.exists():
+        return [], None
+    return _load_violations_from_path(p), str(p.resolve())
+
+
+def _registry_subscriber_impact(violations: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: list[int] = []
+    for v in violations:
+        br = v.get("blast_radius")
+        if not isinstance(br, dict):
+            continue
+        subs = br.get("subscribers")
+        if isinstance(subs, list):
+            counts.append(len(subs))
+    return {
+        "violations_with_blast_radius": sum(1 for c in counts if c > 0),
+        "max_subscribers_on_single_violation": max(counts) if counts else 0,
+        "total_subscriber_rows_across_violations": sum(counts),
+    }
 
 
 def _top_violations_from_validation(week3: dict[str, Any] | None, week5: dict[str, Any] | None) -> list[dict[str, Any]]:
@@ -176,12 +215,46 @@ def _recommended_actions(violations: list[dict[str, Any]], ai_metrics: dict[str,
     return actions[:3]
 
 
-def generate_report() -> dict[str, Any]:
-    week3 = _load_latest_json(str(_REPO / "validation_reports" / "week3_*.json"))
-    week5 = _load_latest_json(str(_REPO / "validation_reports" / "week5_*.json"))
-    violations = _load_violations_with_blame()
-    ai_path = _REPO / "validation_reports" / "ai_metrics.json"
-    ai_metrics = json.loads(ai_path.read_text(encoding="utf-8")) if ai_path.exists() else {}
+def generate_report(
+    *,
+    week3_report: Path | None = None,
+    week5_report: Path | None = None,
+    ai_metrics_path: Path | None = None,
+    violations_path: Path | None = None,
+    strict_pdf: bool = False,
+) -> dict[str, Any]:
+    week3, w3_src = _load_json_explicit_or_glob(
+        week3_report, str(_REPO / "validation_reports" / "week3_*.json")
+    )
+    week5, w5_src = _load_json_explicit_or_glob(
+        week5_report, str(_REPO / "validation_reports" / "week5_*.json")
+    )
+
+    violations, viol_src = _load_violations_with_blame(violations_path)
+
+    if ai_metrics_path is not None:
+        amp = ai_metrics_path.expanduser().resolve()
+        if amp.is_file():
+            ai_metrics = json.loads(amp.read_text(encoding="utf-8"))
+            ai_src = str(amp)
+        else:
+            ai_metrics = {}
+            ai_src = str(amp)
+    else:
+        default_ai = _REPO / "validation_reports" / "ai_metrics.json"
+        if default_ai.exists():
+            ai_metrics = json.loads(default_ai.read_text(encoding="utf-8"))
+            ai_src = str(default_ai.resolve())
+        else:
+            ai_metrics = {}
+            ai_src = None
+
+    sources_used = {
+        "week3_validation": w3_src,
+        "week5_validation": w5_src,
+        "ai_metrics": ai_src,
+        "violations": viol_src,
+    }
 
     total_checks = 0
     checks_passed = 0
@@ -240,8 +313,20 @@ def generate_report() -> dict[str, Any]:
 
     recommended_actions = _recommended_actions(violations, ai_metrics)
 
-    report_data = {
+    pass_rate = round((checks_passed / max(1, total_checks)) * 100.0, 2)
+    exec_summary = (
+        f"This run aggregated {total_checks} contract checks across the selected Week 3 and Week 5 reports "
+        f"({pass_rate}% PASS). Data health score is {score}/100 with {critical_failures} critical-severity "
+        f"failure(s) in validation results. Review violations, schema drift, and AI metrics for prioritized fixes."
+    )
+
+    registry_impact = _registry_subscriber_impact(violations)
+
+    report_data: dict[str, Any] = {
         "report_generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "sources_used": sources_used,
+        "executive_summary": exec_summary,
+        "registry_subscriber_impact": registry_impact,
         "data_health_score": score,
         "n_critical_contract_violations": critical_failures,
         "data_health_narrative": (
@@ -261,14 +346,17 @@ def generate_report() -> dict[str, Any]:
         "schema_changes_detected": schema_changes,
         "ai_system_risk_assessment": ai_risk_parts,
         "recommended_actions": recommended_actions,
+        "pdf_path": None,
+        "pdf_status": "pending",
+        "pdf_error": None,
     }
 
     out_data = _REPO / "enforcer_report" / "report_data.json"
-    out_data.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
 
     # PDF report (minimal but readable).
     pdf_date = _now_date()
     pdf_path = _REPO / "enforcer_report" / f"report_{pdf_date}.pdf"
+    report_data["pdf_path"] = str(pdf_path).replace("\\", "/")
     try:
         from fpdf import FPDF
 
@@ -310,6 +398,9 @@ def generate_report() -> dict[str, Any]:
         pdf.set_x(pdf.l_margin)
         pdf.multi_cell(w, 7, _pdf_sanitize(f"Data Health Score: {score}/100"))
         pdf.set_x(pdf.l_margin)
+        pdf.multi_cell(w, 6, _pdf_sanitize(exec_summary))
+        pdf.ln(1)
+        pdf.set_x(pdf.l_margin)
         pdf.multi_cell(w, 7, _pdf_sanitize("Violations (top 3):"))
         for v in report_data["violations_this_week"]:
             pdf.set_x(pdf.l_margin)
@@ -341,19 +432,44 @@ def generate_report() -> dict[str, Any]:
             pdf.multi_cell(w, 6, _pdf_sanitize(f"{a.get('priority')}. {a.get('action')}"))
 
         pdf.output(str(pdf_path).replace("\\", "/"))
-    except Exception:
-        # Don't fail the pipeline if PDF generation fails.
+        report_data["pdf_status"] = "ok"
+        report_data["pdf_error"] = None
+    except Exception as exc:
         import traceback
 
         traceback.print_exc()
+        pdf_error_msg = f"{type(exc).__name__}: {exc}"
+        report_data["pdf_status"] = "failed"
+        report_data["pdf_error"] = pdf_error_msg
+
+    out_data.parent.mkdir(parents=True, exist_ok=True)
+    out_data.write_text(json.dumps(report_data, indent=2), encoding="utf-8")
+
+    if strict_pdf and report_data.get("pdf_status") == "failed":
+        raise SystemExit(1)
 
     return report_data
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate Enforcer Report (Week 7)")
-    _ = parser.parse_args()
-    generate_report()
+    parser.add_argument("--week3-report", type=Path, default=None, help="Explicit Week 3 validation JSON (default: latest week3_*.json).")
+    parser.add_argument("--week5-report", type=Path, default=None, help="Explicit Week 5 validation JSON (default: latest week5_*.json).")
+    parser.add_argument("--ai-metrics", type=Path, default=None, help="Path to ai_metrics.json (default: validation_reports/ai_metrics.json).")
+    parser.add_argument("--violations", type=Path, default=None, help="Violations JSONL (default: violations_with_blame or violations).")
+    parser.add_argument(
+        "--strict-pdf",
+        action="store_true",
+        help="Exit with code 1 if PDF generation fails (default: tolerate PDF errors).",
+    )
+    args = parser.parse_args()
+    generate_report(
+        week3_report=args.week3_report,
+        week5_report=args.week5_report,
+        ai_metrics_path=args.ai_metrics,
+        violations_path=args.violations,
+        strict_pdf=args.strict_pdf,
+    )
 
 
 if __name__ == "__main__":

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import sys
+import textwrap
 from pathlib import Path
 
 import pytest
@@ -85,3 +86,90 @@ def test_breaking_field_match() -> None:
 
     assert breaking_field_matches_check("extracted_facts.confidence", "week3.extracted_facts.confidence.range")
     assert breaking_field_matches_check("payload", "week5.payload.jsonschema")
+
+
+def test_load_jsonl_with_issues_skips_bad_lines(tmp_path: Path) -> None:
+    from contracts.common import load_jsonl_with_issues
+
+    p = tmp_path / "x.jsonl"
+    p.write_text(
+        '{"a": 1}\nnot-json\n"string-not-object"\n{"b": 2}\n',
+        encoding="utf-8",
+    )
+    rows, issues = load_jsonl_with_issues(p)
+    assert len(rows) == 2
+    assert any(r.get("a") == 1 for r in rows)
+    assert any(r.get("b") == 2 for r in rows)
+    kinds = {i["kind"] for i in issues}
+    assert "json_decode" in kinds
+    assert "not_object" in kinds
+
+
+def test_validate_subscriptions_empty_registry_fails(tmp_path: Path) -> None:
+    from contracts.registry import validate_subscriptions
+
+    reg = tmp_path / "contract_registry"
+    reg.mkdir()
+    (reg / "subscriptions.yaml").write_text("subscriptions: []\n", encoding="utf-8")
+    ok, lines = validate_subscriptions(tmp_path)
+    assert ok is False
+    assert any("empty" in x.lower() for x in lines)
+
+
+def test_validate_subscriptions_real_repo() -> None:
+    from contracts.registry import validate_subscriptions
+
+    ok, lines = validate_subscriptions(ROOT)
+    assert ok is True
+    assert isinstance(lines, list)
+
+
+def test_run_validation_jsonl_ingest_errors(tmp_path: Path) -> None:
+    from contracts.runner import run_validation
+
+    data = tmp_path / "data.jsonl"
+    data.write_text('{"doc_id": "550e8400-e29b-41d4-a716-446655440000"}\nBOGUS\n', encoding="utf-8")
+    contract_path = tmp_path / "c.yaml"
+    contract_path.write_text(
+        textwrap.dedent(
+            """
+            id: smoke-unknown-contract
+            schema:
+              doc_id:
+                type: string
+                required: true
+            """
+        ).strip(),
+        encoding="utf-8",
+    )
+    report = run_validation(contract_path, data, None, ROOT)
+    ingest = [r for r in report["results"] if r.get("check_type") == "ingest"]
+    assert ingest and ingest[0]["status"] == "ERROR"
+    assert "runner.unsupported_contract" in {r.get("check_id") for r in report["results"]}
+
+
+def test_schema_analyzer_nested_diff() -> None:
+    from contracts.schema_analyzer import _diff_schemas
+
+    a = {
+        "root": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"c": {"type": "number", "required": False}},
+            },
+        }
+    }
+    b = {
+        "root": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {"c": {"type": "string", "required": False}},
+            },
+        }
+    }
+    d = _diff_schemas(a, b)
+    assert d["compatibility_verdict"] == "BREAKING"
+    fields = " ".join(str(c.get("field")) for c in d["breaking_changes"])
+    assert "properties.c" in fields

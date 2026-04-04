@@ -191,6 +191,13 @@ profiling:
     p95: 4817.4
     p99: 4907.82
     stddev: 1292.6232237886204
+  ingest:
+    jsonl_lines_accepted: 55
+    jsonl_lines_rejected: 0
+    issue_sample: []
+    type_anomalies:
+      extracted_facts_confidence_non_numeric_count: 0
+      extracted_facts_wrong_type_row_count: 0
 llm_annotations:
   column: extracted_facts.confidence
   table: extractions
