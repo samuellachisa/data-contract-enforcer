@@ -428,12 +428,40 @@ def check_langsmith_traces(traces: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="AI Contract Extensions (Week 7)")
+    parser.add_argument(
+        "--extractions",
+        type=Path,
+        default=None,
+        help="Week 3 extractions JSONL (default: outputs/week3/extractions.jsonl).",
+    )
+    parser.add_argument(
+        "--verdicts",
+        type=Path,
+        default=None,
+        help="Week 2 verdicts JSONL (default: outputs/week2/verdicts.jsonl).",
+    )
+    parser.add_argument(
+        "--traces",
+        type=Path,
+        default=None,
+        help="LangSmith runs JSONL (default: outputs/traces/runs.jsonl if present).",
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=None,
+        help="Write metrics JSON (default: validation_reports/ai_metrics.json). Practitioner manual also names validation_reports/ai_extensions.json.",
+    )
+    parser.add_argument(
+        "--also-write-ai-extensions-name",
+        action="store_true",
+        help="Also write validation_reports/ai_extensions.json (duplicate of metrics for rubric filenames).",
+    )
     args = parser.parse_args()
-    _ = args
 
-    extractions_path = _REPO / "outputs" / "week3" / "extractions.jsonl"
-    verdicts_path = _REPO / "outputs" / "week2" / "verdicts.jsonl"
-    traces_path = _REPO / "outputs" / "traces" / "runs.jsonl"
+    extractions_path = (args.extractions or _REPO / "outputs" / "week3" / "extractions.jsonl").expanduser().resolve()
+    verdicts_path = (args.verdicts or _REPO / "outputs" / "week2" / "verdicts.jsonl").expanduser().resolve()
+    traces_path = (args.traces or _REPO / "outputs" / "traces" / "runs.jsonl").expanduser().resolve()
 
     extractions = _load_jsonl(extractions_path)
     verdicts = _load_jsonl(verdicts_path)
@@ -481,9 +509,15 @@ def main() -> None:
         "timestamp": _now_iso(),
     }
 
-    out = _REPO / "validation_reports" / "ai_metrics.json"
-    out.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+    out = (args.output or _REPO / "validation_reports" / "ai_metrics.json").expanduser().resolve()
+    out.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(metrics, indent=2)
+    out.write_text(payload, encoding="utf-8")
     print(f"Wrote {out}")
+    if args.also_write_ai_extensions_name:
+        alt = _REPO / "validation_reports" / "ai_extensions.json"
+        alt.write_text(payload, encoding="utf-8")
+        print(f"Wrote {alt}")
 
 
 if __name__ == "__main__":

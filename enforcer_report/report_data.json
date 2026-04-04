@@ -1,19 +1,78 @@
 {
-  "report_generated_at": "2026-04-04T13:42:53Z",
-  "data_health_score": 100.0,
-  "n_critical_contract_violations": 0,
-  "data_health_narrative": "Overall health is reduced by high-severity contract violations. Fix CRITICAL fields to prevent silent corruption downstream.",
+  "report_generated_at": "2026-04-04T15:58:33Z",
+  "generated_at": "2026-04-04T15:58:33Z",
+  "period": "2026-03-28 to 2026-04-04",
+  "sources_used": {
+    "week3_validation": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\week3_ci_local.json",
+    "week5_validation": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\week5_ci_local.json",
+    "ai_metrics": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\ai_metrics.json",
+    "violations": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\violation_log\\violations_with_blame.jsonl",
+    "migration_report": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\migration_impact_week3-document-refinery-extractions_20260404_141244.json"
+  },
+  "executive_summary": "This run aggregated 35 contract checks across the selected Week 3 and Week 5 reports (100.0% PASS on those two). Data health score is 50.0/100 using severity-weighted deductions over all structured validation JSON in validation_reports/ (3 failing check rows). Review violations, schema drift, and AI metrics for prioritized fixes.",
+  "registry_subscriber_impact": {
+    "violations_with_blast_radius": 2,
+    "max_subscribers_on_single_violation": 1,
+    "total_subscriber_rows_across_violations": 2
+  },
+  "data_health_score": 50.0,
+  "n_critical_contract_violations": 2,
+  "data_health_narrative": "Score 50.0/100 from 3 failed check(s) across validation_reports/*.json (manual rubric deductions). 2 critical issue(s) require immediate action.",
+  "top_violations_plain_language": [
+    "The 'extracted_facts[*].confidence' field failed its range check. Expected max<=1.0, min>=0.0, found max=97.000, mean=72.382, min=50.000. Downstream subscribers affected: week4-cartographer. Records failing: 55.",
+    "The 'scores[*].score' field failed its range check. Expected integer 1\u20135, found invalid=3. Downstream subscribers affected: no registered subscribers. Records failing: 3.",
+    "The 'extracted_facts[*].confidence' field failed its drift check. Expected WARN if >2\u03c3, FAIL if >3\u03c3, found current_mean=72.3818, baseline_mean=0.7238, dev_sigma=501.68. Downstream subscribers affected: week4-cartographer. Records failing: 0."
+  ],
+  "violations_by_severity": {
+    "CRITICAL": 2,
+    "HIGH": 1,
+    "MEDIUM": 0
+  },
+  "ai_risk": {
+    "embedding_drift": -0.0,
+    "output_violation_rate": 0.12,
+    "status": "WARN"
+  },
   "violations_this_week": [
     {
       "severity": "CRITICAL",
-      "description": "Week 2 Digital Courtroom: verdict records failed structured LLM output schema validation. Downstream AI consumers can ingest malformed scores or evidence and produce incorrect risk decisions.",
-      "check_id": "week2.verdict_record.schema"
+      "description": "Week 3 Document Refinery: `extracted_facts[*].confidence` must stay a float in 0.0\u20131.0. Downstream systems that interpret confidence as a probability (Week 4 lineage attribution and any scoring consumers) may mis-rank or mis-blame changes.",
+      "check_id": "week3.extracted_facts.confidence.range",
+      "field": "extracted_facts[*].confidence"
+    },
+    {
+      "severity": "CRITICAL",
+      "description": "Each criterion score must be integer 1\u20135.",
+      "check_id": "week2.scores.criterion.range",
+      "field": "scores[*].score"
+    },
+    {
+      "severity": "HIGH",
+      "description": "Statistical drift vs first-run baseline.",
+      "check_id": "week3.extracted_facts.confidence.statistical_drift",
+      "field": "extracted_facts[*].confidence"
     }
   ],
   "schema_changes_detected": [
-    "Week 3 extraction records: Field `extracted_facts` changed type from `array` to `object`. Breaking change requires coordinated consumer updates.",
-    "Week 5 event records: Field `payload` changed type from `object` to `integer`. Breaking change requires coordinated consumer updates."
+    "week3-document-refinery-extractions: compatibility_verdict=BREAKING.",
+    "week3-document-refinery-extractions: breaking field `extracted_facts`.",
+    "week3-document-refinery-extractions: migration task \u2014 Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+    "week3-document-refinery-extractions: rollback \u2014 Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete."
   ],
+  "schema_evolution_summary": {
+    "contract_id": "week3-document-refinery-extractions",
+    "compatibility_verdict": "BREAKING",
+    "breaking_fields": [
+      "extracted_facts"
+    ],
+    "rollback_plan": "Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete.",
+    "checklist_preview": [
+      {
+        "task": "Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+        "owner": "downstream-team"
+      }
+    ]
+  },
   "ai_system_risk_assessment": [
     "Embedding drift is within acceptable bounds.",
     "Structured LLM output schema violation rate is rising (violation_rate=0.12, baseline=0.0)."
@@ -22,17 +81,15 @@
     {
       "priority": 1,
       "risk_reduction": "High",
-      "action": "Update `src/week3/extractor.py` so `extracted_facts[*].confidence` is emitted as a float in the 0.0\u20131.0 range (contract clause: `week3.extracted_facts.confidence.range`)."
-    },
-    {
-      "priority": 2,
-      "risk_reduction": "High",
-      "action": "Update `src/week3/extractor.py` so every `extracted_facts[*].entity_refs[]` value is an `entity_id` present in the same record\u2019s `entities[]` array (contract clause: `week3.extracted_facts.entity_refs.relationship`)."
+      "action": "Update `C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\src\\week3\\extractor.py` so `extracted_facts[*].confidence` is a float in 0.0\u20131.0 (contract `week3-document-refinery-extractions`, clause `week3.extracted_facts.confidence.range`)."
     },
     {
       "priority": 3,
       "risk_reduction": "Medium",
-      "action": "Stabilize Week 2 structured verdict outputs by updating the LLM prompt or parser so the `scores[*].score` field is always an integer 1\u20135 (AI contract: `week2.verdict_record.schema`)."
+      "action": "Stabilize Week 2 structured verdict outputs (scores as integers 1\u20135); see `contracts/ai_extensions.py` and `outputs/week2/verdicts.jsonl`."
     }
-  ]
+  ],
+  "pdf_path": "C:/Users/SAMILA/Documents/Projects/Personal/tenx/Week 7/Week 7 (Data Contract Enforcer)/enforcer_report/report_20260404.pdf",
+  "pdf_status": "ok",
+  "pdf_error": null
 }

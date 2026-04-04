@@ -52,12 +52,37 @@ def _iter_jsonl(path: Path) -> Iterable[dict[str, Any]]:
             yield json.loads(line)
 
 
-def _load_latest_lineage(root: Path) -> dict[str, Any] | None:
-    p = root / "outputs" / "week4" / "lineage_snapshots.jsonl"
+def _load_latest_lineage(root: Path, lineage_jsonl: Path | None = None) -> dict[str, Any] | None:
+    p = lineage_jsonl if lineage_jsonl is not None else root / "outputs" / "week4" / "lineage_snapshots.jsonl"
     if not p.exists():
         return None
     rows = list(_iter_jsonl(p))
     return rows[-1] if rows else None
+
+
+def violations_from_validation_report(report_path: Path) -> list[dict[str, Any]]:
+    """Turn a ValidationRunner JSON report into attributor-ready violation rows (manual integration step)."""
+    data = json.loads(report_path.read_text(encoding="utf-8"))
+    contract_id = str(data.get("contract_id") or "")
+    ts = str(data.get("run_timestamp") or _now_iso())
+    out: list[dict[str, Any]] = []
+    for r in data.get("results", []) or []:
+        if str(r.get("status")) not in {"FAIL", "ERROR"}:
+            continue
+        out.append(
+            {
+                "violation_id": str(uuid.uuid4()),
+                "type": "contract_violation",
+                "check_id": str(r.get("check_id", "")),
+                "detected_at": ts,
+                "message": str(r.get("message", "")),
+                "source_contract_id": contract_id,
+                "records_failing": int(r.get("records_failing") or 0),
+                "severity": str(r.get("severity", "HIGH")),
+                "blame_hint": {"file": "src/week3/extractor.py", "line_start": 1, "line_end": 120},
+            }
+        )
+    return out
 
 
 def _index_lineage(lineage: dict[str, Any] | None) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -428,8 +453,14 @@ def _confidence_score(days_since_commit: float, hop_count: int) -> float:
 _MAX_BLAME_MERGE_RANKS = 5
 
 
-def attribute_violations(input_path: Path, output_path: Path) -> None:
-    lineage = _load_latest_lineage(_REPO)
+def attribute_violations(
+    input_path: Path,
+    output_path: Path,
+    *,
+    lineage_jsonl: Path | None = None,
+    subscriptions_yaml: Path | None = None,
+) -> None:
+    lineage = _load_latest_lineage(_REPO, lineage_jsonl)
     nodes, edges = _index_lineage(lineage)
 
     violations = list(_iter_jsonl(input_path))
@@ -457,7 +488,7 @@ def attribute_violations(input_path: Path, output_path: Path) -> None:
 
         cid = str(v.get("source_contract_id", "") or "")
         chk = str(v.get("check_id", "") or "")
-        reg_subs = subscribers_for_violation(_REPO, cid, chk)
+        reg_subs = subscribers_for_violation(_REPO, cid, chk, subscriptions_yaml=subscriptions_yaml)
         blast["subscribers"] = subscriber_summary_entries(reg_subs)
         blast["registry_query"] = {"source_contract_id": cid, "check_id": chk, "matched_count": len(reg_subs)}
 
@@ -530,13 +561,35 @@ def attribute_violations(input_path: Path, output_path: Path) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="ViolationAttributor (Week 7)")
-    parser.add_argument("--input", type=Path, default=_REPO / "violation_log" / "violations.jsonl")
+    parser.add_argument("--input", type=Path, default=None, help="violations.jsonl (default if no --violation).")
+    parser.add_argument(
+        "--violation",
+        type=Path,
+        default=None,
+        help="ValidationRunner JSON report (e.g. validation_reports/violated.json); converts FAIL/ERROR rows to violations.",
+    )
+    parser.add_argument("--lineage", type=Path, default=None, help="Override lineage JSONL (default: outputs/week4/lineage_snapshots.jsonl).")
+    parser.add_argument("--registry", type=Path, default=None, help="Override contract_registry/subscriptions.yaml path.")
     parser.add_argument("--output", type=Path, default=_REPO / "violation_log" / "violations_with_blame.jsonl")
     parser.add_argument("--violation-id", type=str, default=None, help="Optional single violation id filter.")
     args = parser.parse_args()
 
-    input_path: Path = args.input
-    violations = list(_iter_jsonl(input_path))
+    reg_path = args.registry.expanduser().resolve() if args.registry else None
+    lin_path = args.lineage.expanduser().resolve() if args.lineage else None
+
+    if args.violation is not None:
+        vpath = args.violation.expanduser().resolve()
+        if not vpath.is_file():
+            raise SystemExit(f"--violation not a file: {vpath}")
+        converted = violations_from_validation_report(vpath)
+        if not converted:
+            raise SystemExit(f"No FAIL/ERROR results in validation report: {vpath}")
+        input_path = _REPO / "violation_log" / "_from_validation_report.jsonl"
+        input_path.write_text("\n".join(json.dumps(v, ensure_ascii=False) for v in converted) + "\n", encoding="utf-8")
+        violations = converted
+    else:
+        input_path = (args.input or (_REPO / "violation_log" / "violations.jsonl")).expanduser().resolve()
+        violations = list(_iter_jsonl(input_path))
     if args.violation_id:
         violations = [v for v in violations if str(v.get("violation_id")) == args.violation_id]
         if not violations:
@@ -544,13 +597,18 @@ def main() -> None:
 
         tmp = _REPO / "violation_log" / "_tmp_violation.jsonl"
         tmp.write_text("\n".join(json.dumps(v) for v in violations) + "\n", encoding="utf-8")
-        attribute_violations(tmp, args.output)
+        attribute_violations(tmp, args.output, lineage_jsonl=lin_path, subscriptions_yaml=reg_path)
         try:
             tmp.unlink()
         except Exception:
             pass
     else:
-        attribute_violations(input_path, args.output)
+        attribute_violations(
+            input_path,
+            args.output,
+            lineage_jsonl=lin_path,
+            subscriptions_yaml=reg_path,
+        )
 
     # Print one enriched violation for quick demo / evaluator parsing.
     with args.output.open("r", encoding="utf-8") as f:

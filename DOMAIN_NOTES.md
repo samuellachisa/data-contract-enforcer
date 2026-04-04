@@ -107,7 +107,37 @@ In our real run, `contracts/runner.py` produced CRITICAL failures on:
 
 ---
 
-## 3) Week 4 lineage → blame chain: step-by-step graph traversal logic
+## 3) Trust boundary: Producer CI, registry, internal vs external subscribers (Phase 0)
+
+**Question (manual Phase 0 Q3):** When the producer detects a breaking schema change, who learns what—and what do you *not* get to see?
+
+**Key insight:** External subscribers only receive a **notification** from the registry (or equivalent catalog process). They compute **their own** blast radius on **their** internal systems. You never traverse their graphs or repos.
+
+**Sequence (breaking change detected on producer; deploy blocked until registry migration plan exists):**
+
+```
+Producer          ProducerCI         ContractRegistry    SubA(internal)     SubB(external)
+   |                  |                    |                    |                  |
+   |--schema change-->|                    |                    |                  |
+   |                  |--SchemaEvolution-->|                    |                  |
+   |                  |   Analyzer runs   |                    |                  |
+   |                  |<--BREAKING found---|                    |                  |
+   |                  |--notify subs------>|                    |                  |
+   |                  |                    |--notify------------>|                  |
+   |                  |                    |--notify-------------------------------->|
+   |                  |                    |                    |                  |
+   |                  |<--deploy blocked---|   SubA runs own    |   SubB runs own  |
+   |                  |  until migration   |   internal blast     |   internal blast |
+   |                  |  plan in registry  |   radius query       |   radius query   |
+```
+
+**How this maps to Tier 1 (this monorepo):** `contract_registry/subscriptions.yaml` is the Tier-1 registry. `contracts/attributor.py` queries it first for `breaking_fields` matches, then **enriches** with Week 4 lineage reachability inside repos we own (`outputs/week4/lineage_snapshots.jsonl`). If a subscriber were another company, we would still run `ValidationRunner` on **our** copy of the data and rely on the registry row for “who to notify”—not on traversing their infrastructure.
+
+**Process (not just YAML):** The registry only works if producer CI runs `SchemaEvolutionAnalyzer` (or equivalent) and blocks deploy when a breaking change lacks a migration entry—see section 6 for why contracts otherwise go stale.
+
+---
+
+## 4) Week 4 lineage → blame chain: step-by-step graph traversal logic
 
 The Data Contract Enforcer uses Week 4’s lineage graph to build blame chains when a validation failure appears.
 
@@ -231,7 +261,7 @@ When our Week 3 confidence range failed, this is the concrete graph-based blame 
 
 ---
 
-## 4) Data contract for the LangSmith trace_record schema (Bitol-compatible YAML)
+## 5) Data contract for the LangSmith trace_record schema (Bitol-compatible YAML)
 
 The trace schema (from the prompt) is enforced as a data contract with structural clauses (required fields + enums), statistical clauses (token math, cost non-negativity), and AI-specific clauses (LLM run metadata patterns).
 
@@ -294,7 +324,7 @@ quality:
 lineage:
   upstream: []
   downstream:
-    - id: week7-ai-extensions
+    - id: week6-synthesis-consumer
       description: Trace schema enforcement for AI contract extensions.
 ```
 
@@ -304,7 +334,7 @@ Why this is AI-specific:
 
 ---
 
-## 5) Most common contract enforcement failure mode in production, and why contracts get stale
+## 6) Most common contract enforcement failure mode in production, and why contracts get stale
 
 The most common failure mode is **silent corruption from statistical drift passing structural checks**.
 

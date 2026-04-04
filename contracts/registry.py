@@ -25,8 +25,8 @@ def registry_path(root: Path) -> Path:
     return root / "contract_registry" / "subscriptions.yaml"
 
 
-def load_subscriptions(root: Path) -> list[dict[str, Any]]:
-    p = registry_path(root)
+def load_subscriptions(root: Path, *, subscriptions_yaml: Path | None = None) -> list[dict[str, Any]]:
+    p = subscriptions_yaml if subscriptions_yaml is not None else registry_path(root)
     if not p.exists():
         return []
     data = load_yaml(p)
@@ -74,13 +74,15 @@ def subscribers_for_violation(
     root: Path,
     source_contract_id: str,
     check_id: str,
+    *,
+    subscriptions_yaml: Path | None = None,
 ) -> list[dict[str, Any]]:
     """
     Return subscriptions whose contract_id matches and whose breaking_fields
     are affected by check_id.
     """
     out: list[dict[str, Any]] = []
-    for sub in load_subscriptions(root):
+    for sub in load_subscriptions(root, subscriptions_yaml=subscriptions_yaml):
         if str(sub.get("contract_id", "")) != source_contract_id:
             continue
         bfs = sub.get("breaking_fields") or []
@@ -132,7 +134,7 @@ def validate_subscriptions(
                 "registry: note: no generated_contracts/*.yaml ids found; contract_id cross-check skipped."
             )
 
-    subs = load_subscriptions(root)
+    subs = load_subscriptions(root, subscriptions_yaml=None)
     if not subs:
         lines.append("registry: subscriptions list is empty or file missing.")
         return False, lines

@@ -15,9 +15,10 @@ subscriptions:
     registered_at: "2026-01-10T09:00:00Z"
     contact: week4-team@org.com
 
+  # Week 4 → Week 6 consumer (synthesis / enforcement hub). Same role as "Week 6" in the practitioner manual.
   - contract_id: week4-brownfield-lineage-snapshots
-    subscriber_id: week7-violation-attributor
-    subscriber_team: week7
+    subscriber_id: week6-synthesis-consumer
+    subscriber_team: week6
     fields_consumed: [nodes, edges, git_commit]
     breaking_fields:
       - field: edges.relationship
@@ -26,11 +27,11 @@ subscriptions:
         reason: stable node identity required for blast radius and blame chain
     validation_mode: ENFORCE
     registered_at: "2026-01-10T10:00:00Z"
-    contact: week7-team@org.com
+    contact: week6-platform@org.com
 
   - contract_id: week5-event-sourcing-events
-    subscriber_id: week7-validation-runner
-    subscriber_team: week7
+    subscriber_id: week6-synthesis-consumer
+    subscriber_team: week6
     fields_consumed: [payload, event_type, metadata, sequence_number, occurred_at, recorded_at]
     breaking_fields:
       - field: payload
@@ -39,15 +40,15 @@ subscriptions:
         reason: monotonic per aggregate_id required for replay correctness
     validation_mode: AUDIT
     registered_at: "2026-01-10T10:30:00Z"
-    contact: week7-team@org.com
+    contact: week6-platform@org.com
 
   - contract_id: langsmith-trace-runs
-    subscriber_id: week7-ai-extensions
-    subscriber_team: week7
+    subscriber_id: week6-synthesis-consumer
+    subscriber_team: week6
     fields_consumed: [total_tokens, prompt_tokens, completion_tokens, run_type, start_time, end_time]
     breaking_fields:
       - field: total_tokens
         reason: must equal prompt_tokens + completion_tokens for cost accounting
     validation_mode: AUDIT
     registered_at: "2026-01-10T11:00:00Z"
-    contact: week7-team@org.com
+    contact: week6-platform@org.com

@@ -11,11 +11,16 @@ from __future__ import annotations
 import argparse
 import glob
 import json
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 _REPO = Path(__file__).resolve().parents[1]
+
+# Practitioner manual — severity deductions across all validation_reports/*.json with a `results` array.
+SEVERITY_DEDUCTIONS_MANUAL = {"CRITICAL": 20, "HIGH": 10, "MEDIUM": 5, "LOW": 1, "WARNING": 1}
 
 
 def _now_date() -> str:
@@ -44,6 +49,83 @@ def _load_json_explicit_or_glob(
 def _severity_rank(sev: str) -> int:
     order = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3, "WARNING": 4}
     return order.get(sev, 99)
+
+
+def _iter_structured_validation_reports(root: Path) -> list[Path]:
+    """JSON files under validation_reports/ that look like ValidationRunner output."""
+    vr = root / "validation_reports"
+    if not vr.is_dir():
+        return []
+    skip = {"ai_metrics.json", "ai_extensions.json", "report_data.json"}
+    out: list[Path] = []
+    for p in sorted(vr.glob("*.json")):
+        if p.name in skip or p.name.startswith("migration_impact_"):
+            continue
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if isinstance(data, dict) and isinstance(data.get("results"), list):
+            out.append(p)
+    return out
+
+
+def _manual_health_score_and_fails(root: Path) -> tuple[float, list[dict[str, Any]]]:
+    """Dedupe failing checks by check_id so duplicate report files do not multiply deductions."""
+    best_fail_per_check: dict[str, dict[str, Any]] = {}
+    for p in _iter_structured_validation_reports(root):
+        data = json.loads(p.read_text(encoding="utf-8"))
+        for r in data.get("results", []) or []:
+            if str(r.get("status")) not in {"FAIL", "ERROR"}:
+                continue
+            row = dict(r)
+            cid = str(row.get("check_id", p.name))
+            prev = best_fail_per_check.get(cid)
+            if prev is None or _severity_rank(str(row.get("severity", "LOW"))) < _severity_rank(
+                str(prev.get("severity", "LOW"))
+            ):
+                best_fail_per_check[cid] = row
+    all_fails = list(best_fail_per_check.values())
+    score = 100.0
+    for f in all_fails:
+        score -= float(SEVERITY_DEDUCTIONS_MANUAL.get(str(f.get("severity", "LOW")), 1))
+    return max(0.0, min(100.0, round(score, 2))), all_fails
+
+
+def _plain_language_failure(
+    result: dict[str, Any], registry_path: Path
+) -> str:
+    """Rubric-style sentence tying a failed check to registry subscribers."""
+    try:
+        reg = yaml.safe_load(registry_path.read_text(encoding="utf-8")) if registry_path.is_file() else {}
+    except Exception:
+        reg = {}
+    subs_list = reg.get("subscriptions", []) if isinstance(reg, dict) else []
+    check_id = str(result.get("check_id", ""))
+    contract_id = ""
+    if check_id.startswith("week3.") or check_id.startswith("cross.week3"):
+        contract_id = "week3-document-refinery-extractions"
+    elif check_id.startswith("week5.") or check_id.startswith("cross.week5"):
+        contract_id = "week5-event-sourcing-events"
+    elif check_id.startswith("week4.") or check_id.startswith("cross.week4"):
+        contract_id = "week4-brownfield-lineage-snapshots"
+    elif check_id.startswith("langsmith.") or check_id.startswith("cross.langsmith"):
+        contract_id = "langsmith-trace-runs"
+    sub_strs = [
+        str(s.get("subscriber_id", ""))
+        for s in subs_list
+        if isinstance(s, dict) and str(s.get("contract_id", "")) == contract_id
+    ]
+    sub_str = ", ".join(sub_strs) if sub_strs else "no registered subscribers"
+    col = str(result.get("column_name", result.get("field", "?")))
+    ctype = str(result.get("check_type", "contract"))
+    exp = str(result.get("expected", "per contract"))
+    act = str(result.get("actual_value", "see report"))
+    nfail = result.get("records_failing", "unknown")
+    return (
+        f"The '{col}' field failed its {ctype} check. Expected {exp}, found {act}. "
+        f"Downstream subscribers affected: {sub_str}. Records failing: {nfail}."
+    )
 
 
 def _load_violations_from_path(p: Path) -> list[dict[str, Any]]:
@@ -194,7 +276,6 @@ def _schema_diff_breaking_summary() -> list[str]:
     Quick summary from the last two schema snapshots for week3/week5.
     """
     out: list[str] = []
-    import yaml
 
     def last_two(contract_id: str) -> list[Path]:
         d = _REPO / "schema_snapshots" / contract_id
@@ -249,8 +330,12 @@ def _describe_violation(v: dict[str, Any]) -> str:
     return v.get("message", "Contract violation.")
 
 
-def _recommended_actions(violations: list[dict[str, Any]], ai_metrics: dict[str, Any]) -> list[dict[str, Any]]:
+def _recommended_actions(
+    violations: list[dict[str, Any]], ai_metrics: dict[str, Any], *, repo: Path
+) -> list[dict[str, Any]]:
     actions: list[dict[str, Any]] = []
+    runner = (repo / "contracts" / "runner.py").resolve()
+    extractor = (repo / "src" / "week3" / "extractor.py").resolve()
     # Prioritize concrete contract breaks first.
     for v in violations:
         check_id = str(v.get("check_id", ""))
@@ -259,7 +344,10 @@ def _recommended_actions(violations: list[dict[str, Any]], ai_metrics: dict[str,
                 {
                     "priority": 1,
                     "risk_reduction": "High",
-                    "action": "Update `src/week3/extractor.py` so `extracted_facts[*].confidence` is emitted as a float in the 0.0–1.0 range (contract clause: `week3.extracted_facts.confidence.range`).",
+                    "action": (
+                        f"Update `{extractor}` so `extracted_facts[*].confidence` is a float in 0.0–1.0 "
+                        "(contract `week3-document-refinery-extractions`, clause `week3.extracted_facts.confidence.range`)."
+                    ),
                 }
             )
         if "week3.extracted_facts.entity_refs.relationship" in check_id:
@@ -267,12 +355,21 @@ def _recommended_actions(violations: list[dict[str, Any]], ai_metrics: dict[str,
                 {
                     "priority": 2,
                     "risk_reduction": "High",
-                    "action": "Update `src/week3/extractor.py` so every `extracted_facts[*].entity_refs[]` value is an `entity_id` present in the same record’s `entities[]` array (contract clause: `week3.extracted_facts.entity_refs.relationship`).",
+                    "action": (
+                        f"Update `{extractor}` so each `extracted_facts[*].entity_refs[]` references an `entity_id` "
+                        "from the same record’s `entities[]` (clause `week3.extracted_facts.entity_refs.relationship`)."
+                    ),
                 }
             )
 
     if not actions:
-        actions.append({"priority": 1, "risk_reduction": "Medium", "action": "Review the highest-severity contract failures and update producers/consumers accordingly."})
+        actions.append(
+            {
+                "priority": 1,
+                "risk_reduction": "Medium",
+                "action": f"Review failing rows in validation_reports/*.json and align producers with generated_contracts/*.yaml.",
+            }
+        )
 
     # AI risks
     if ai_metrics.get("status") == "WARN":
@@ -280,7 +377,7 @@ def _recommended_actions(violations: list[dict[str, Any]], ai_metrics: dict[str,
             {
                 "priority": 3,
                 "risk_reduction": "Medium",
-                "action": "Stabilize Week 2 structured verdict outputs by updating the LLM prompt or parser so the `scores[*].score` field is always an integer 1–5 (AI contract: `week2.verdict_record.schema`).",
+                "action": "Stabilize Week 2 structured verdict outputs (scores as integers 1–5); see `contracts/ai_extensions.py` and `outputs/week2/verdicts.jsonl`.",
             }
         )
     else:
@@ -288,7 +385,7 @@ def _recommended_actions(violations: list[dict[str, Any]], ai_metrics: dict[str,
             {
                 "priority": 3,
                 "risk_reduction": "Low",
-                "action": "Re-run AI extensions after any model/prompt change and monitor `validation_reports/ai_metrics.json` for rising schema violation rate.",
+                "action": f"Add `{runner}` as a CI step before Week 3 deployments; refresh drift baselines monthly.",
             }
         )
 
@@ -333,6 +430,16 @@ def generate_report(
             ai_metrics = {}
             ai_src = None
 
+    ai_ext_path = _REPO / "validation_reports" / "ai_extensions.json"
+    if ai_ext_path.exists():
+        try:
+            extra_ai = json.loads(ai_ext_path.read_text(encoding="utf-8"))
+            if isinstance(extra_ai, dict):
+                for k, v in extra_ai.items():
+                    ai_metrics.setdefault(k, v)
+        except json.JSONDecodeError:
+            pass
+
     sources_used = {
         "week3_validation": w3_src,
         "week5_validation": w5_src,
@@ -354,9 +461,20 @@ def generate_report(
             if str(r.get("status")) in {"FAIL", "ERROR"} and str(r.get("severity")) == "CRITICAL":
                 critical_failures += 1
 
-    base = (checks_passed / max(1, total_checks)) * 100.0
-    score = max(0.0, float(base) - (critical_failures * 20.0))
-    score = round(score, 2)
+    manual_score, manual_fail_rows = _manual_health_score_and_fails(_REPO)
+    score = manual_score
+    critical_failures = sum(
+        1 for r in manual_fail_rows if str(r.get("severity")) == "CRITICAL"
+    )
+
+    reg_yaml = _REPO / "contract_registry" / "subscriptions.yaml"
+    top_plain = sorted(manual_fail_rows, key=lambda x: _severity_rank(str(x.get("severity", "LOW"))))[:3]
+    top_violations_plain = [_plain_language_failure(r, reg_yaml) for r in top_plain]
+    violations_by_severity = {
+        "CRITICAL": sum(1 for r in manual_fail_rows if str(r.get("severity")) == "CRITICAL"),
+        "HIGH": sum(1 for r in manual_fail_rows if str(r.get("severity")) == "HIGH"),
+        "MEDIUM": sum(1 for r in manual_fail_rows if str(r.get("severity")) == "MEDIUM"),
+    }
 
     top_violations = _top_violations_from_validation(week3, week5)
     violations_this_week = []
@@ -388,6 +506,19 @@ def generate_report(
         if len(violations_this_week_final) >= 3:
             break
 
+    if not violations_this_week_final and top_plain:
+        for r in top_plain[:3]:
+            violations_this_week_final.append(
+                _normalize_violation_row(
+                    {
+                        "check_id": r.get("check_id"),
+                        "severity": r.get("severity", "HIGH"),
+                        "field": r.get("column_name", ""),
+                        "message": r.get("message", ""),
+                    }
+                )
+            )
+
     schema_changes = mig_bullets if mig_bullets else _schema_diff_breaking_summary()
 
     ai_risk_parts = []
@@ -406,28 +537,45 @@ def generate_report(
     else:
         ai_risk_parts.append("LLM output schema violation rate is stable.")
 
-    recommended_actions = _recommended_actions(violations, ai_metrics)
+    recommended_actions = _recommended_actions(violations, ai_metrics, repo=_REPO)
 
     pass_rate = round((checks_passed / max(1, total_checks)) * 100.0, 2)
+    n_fail_all = len(manual_fail_rows)
+    health_narrative = (
+        f"Score {score}/100 from {n_fail_all} failed check(s) across validation_reports/*.json (manual rubric deductions). "
+        + (
+            "All sampled systems operating within contract parameters."
+            if score >= 90 and n_fail_all == 0
+            else f"{critical_failures} critical issue(s) require immediate action."
+        )
+    )
     exec_summary = (
         f"This run aggregated {total_checks} contract checks across the selected Week 3 and Week 5 reports "
-        f"({pass_rate}% PASS). Data health score is {score}/100 with {critical_failures} critical-severity "
-        f"failure(s) in validation results. Review violations, schema drift, and AI metrics for prioritized fixes."
+        f"({pass_rate}% PASS on those two). Data health score is {score}/100 using severity-weighted deductions "
+        f"over all structured validation JSON in validation_reports/ ({n_fail_all} failing check rows). "
+        "Review violations, schema drift, and AI metrics for prioritized fixes."
     )
 
     registry_impact = _registry_subscriber_impact(violations)
 
+    now = datetime.now(timezone.utc)
     report_data: dict[str, Any] = {
-        "report_generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "report_generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "generated_at": now.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "period": f"{(now - timedelta(days=7)).date()} to {now.date()}",
         "sources_used": sources_used,
         "executive_summary": exec_summary,
         "registry_subscriber_impact": registry_impact,
         "data_health_score": score,
         "n_critical_contract_violations": critical_failures,
-        "data_health_narrative": (
-            "Overall health is reduced by high-severity contract violations. "
-            "Fix CRITICAL fields to prevent silent corruption downstream."
-        ),
+        "data_health_narrative": health_narrative,
+        "top_violations_plain_language": top_violations_plain,
+        "violations_by_severity": violations_by_severity,
+        "ai_risk": {
+            "embedding_drift": (ai_metrics.get("embedding_drift") or {}).get("drift_score", "N/A"),
+            "output_violation_rate": ai_metrics.get("violation_rate", "N/A"),
+            "status": ai_metrics.get("status", "UNKNOWN"),
+        },
         "violations_this_week": [
             {
                 "severity": v.get("severity"),

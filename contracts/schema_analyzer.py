@@ -374,11 +374,11 @@ def main() -> None:
         "blast_radius_note": "See outputs/week4/lineage_snapshots.jsonl downstream consumers in generated contracts lineage sections.",
         "per_consumer_failure_modes": [
             {
-                "consumer": "week7-validation-runner",
+                "consumer": "week6-synthesis-consumer",
                 "failure_mode": "Validation checks keyed on field types and required flags will ERROR or FAIL.",
             },
             {
-                "consumer": "week7-violation-attributor",
+                "consumer": "week6-synthesis-consumer",
                 "failure_mode": "Blast radius may omit new nodes until lineage graph is regenerated.",
             },
         ],

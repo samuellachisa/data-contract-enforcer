@@ -85,12 +85,42 @@ def _numeric_stats(values: list[float]) -> dict[str, float]:
     }
 
 
-def _load_latest_lineage(root: Path) -> dict[str, Any] | None:
-    path = root / "outputs" / "week4" / "lineage_snapshots.jsonl"
+def _load_latest_lineage(root: Path, lineage_jsonl: Path | None = None) -> dict[str, Any] | None:
+    path = (
+        lineage_jsonl.expanduser().resolve()
+        if lineage_jsonl is not None
+        else (root / "outputs" / "week4" / "lineage_snapshots.jsonl")
+    )
     if not path.exists():
         return None
     rows, _issues = load_jsonl_with_issues(path)
     return rows[-1] if rows else None
+
+
+def _lineage_block_with_registry(
+    root: Path,
+    contract_id: str,
+    downstream: list[dict[str, Any]],
+    subscriptions_yaml: Path | None,
+) -> dict[str, Any]:
+    from contracts.registry import load_subscriptions
+
+    subs = load_subscriptions(root, subscriptions_yaml=subscriptions_yaml)
+    reg_ids = [
+        str(s.get("subscriber_id", ""))
+        for s in subs
+        if isinstance(s, dict) and str(s.get("contract_id", "")) == contract_id
+    ]
+    block: dict[str, Any] = {
+        "upstream": [],
+        "downstream": downstream,
+        "registry_note": (
+            "Blast radius uses registry_subscribers as primary source; downstream is lineage enrichment only."
+        ),
+    }
+    if reg_ids:
+        block["registry_subscribers"] = reg_ids
+    return block
 
 
 def _ingest_block(issues: list[dict[str, Any]], accepted: int) -> dict[str, Any]:
@@ -388,9 +418,14 @@ def _maybe_llm_annotate(
 
 
 def build_week3_contract(
-    rows: list[dict], root: Path, *, ingest: dict[str, Any] | None = None
+    rows: list[dict],
+    root: Path,
+    *,
+    ingest: dict[str, Any] | None = None,
+    lineage_jsonl: Path | None = None,
+    subscriptions_yaml: Path | None = None,
 ) -> dict[str, Any]:
-    lineage = _load_latest_lineage(root)
+    lineage = _load_latest_lineage(root, lineage_jsonl)
     df_flat = _flatten_extractions_for_profile(rows)
     profile = _ydata_profile_summary(df_flat)
     confidences = []
@@ -571,7 +606,9 @@ def build_week3_contract(
                 ]
             },
         },
-        "lineage": {"upstream": [], "downstream": downstream},
+        "lineage": _lineage_block_with_registry(
+            root, "week3-document-refinery-extractions", downstream, subscriptions_yaml
+        ),
         "profiling": {
             "structural_engine": profile.get("engine"),
             "flat_row_count": int(len(df_flat)),
@@ -671,15 +708,20 @@ def _write_week3_dbt(out_dir: Path) -> None:
 
 
 def build_week5_contract(
-    rows: list[dict], root: Path, *, ingest: dict[str, Any] | None = None
+    rows: list[dict],
+    root: Path,
+    *,
+    ingest: dict[str, Any] | None = None,
+    lineage_jsonl: Path | None = None,
+    subscriptions_yaml: Path | None = None,
 ) -> dict[str, Any]:
-    lineage = _load_latest_lineage(root)
+    lineage = _load_latest_lineage(root, lineage_jsonl)
     downstream = _downstream_for_dataset(lineage, "week5")
     if not downstream:
         downstream = [
             {
-                "id": "week7-contract-enforcer",
-                "description": "Week 7 validates event payloads and ordering",
+                "id": "week6-synthesis-consumer",
+                "description": "Week 6 / contract enforcer validates event payloads and ordering",
                 "fields_consumed": ["event_type", "payload", "sequence_number", "aggregate_id"],
                 "breaking_if_changed": ["payload", "event_type"],
             }
@@ -754,7 +796,9 @@ def build_week5_contract(
                 ]
             },
         },
-        "lineage": {"upstream": [], "downstream": downstream},
+        "lineage": _lineage_block_with_registry(
+            root, "week5-event-sourcing-events", downstream, subscriptions_yaml
+        ),
         "profiling": {
             **({"ingest": ingest} if ingest else {}),
         },
@@ -908,8 +952,8 @@ def build_week4_contract(rows: list[dict], root: Path) -> dict[str, Any]:
             "upstream": [],
             "downstream": [
                 {
-                    "id": "week7-violation-attributor",
-                    "description": "ViolationAttributor consumes lineage for blame chains",
+                    "id": "week6-synthesis-consumer",
+                    "description": "Week 6 synthesis / enforcement consumes lineage for blame chains",
                     "fields_consumed": ["nodes", "edges", "git_commit"],
                     "breaking_if_changed": ["edges", "nodes"],
                 }
@@ -1032,7 +1076,12 @@ def build_week2_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                 ]
             },
         },
-        "lineage": {"upstream": [], "downstream": [{"id": "week7-ai-extensions", "description": "AI Contract Extension validates structured output schema for verdicts."}]},
+        "lineage": {
+            "upstream": [],
+            "downstream": [
+                {"id": "week6-synthesis-consumer", "description": "Week 6 consumer validates structured verdict schema."}
+            ],
+        },
     }
 
 
@@ -1072,7 +1121,7 @@ def build_langsmith_contract(rows: list[dict], root: Path) -> dict[str, Any]:
                 ]
             },
         },
-        "lineage": {"upstream": [], "downstream": [{"id": "week7-ai-extensions", "description": "Trace schema enforcement"}]},
+        "lineage": {"upstream": [], "downstream": [{"id": "week6-synthesis-consumer", "description": "Trace schema enforcement"}]},
     }
 
 
@@ -1096,7 +1145,14 @@ def _infer_simple_schema_from_rows(rows: list[dict]) -> dict[str, Any]:
     return inferred
 
 
-def run_single_source(source: Path, out_dir: Path, root: Path) -> None:
+def run_single_source(
+    source: Path,
+    out_dir: Path,
+    root: Path,
+    *,
+    lineage_jsonl: Path | None = None,
+    subscriptions_yaml: Path | None = None,
+) -> None:
     source = source.resolve()
     out_dir = out_dir.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1108,7 +1164,13 @@ def run_single_source(source: Path, out_dir: Path, root: Path) -> None:
             **_ingest_block(issues, len(rows)),
             "type_anomalies": _week3_ingest_anomalies(rows),
         }
-        contract = build_week3_contract(rows, root, ingest=ingest_w3)
+        contract = build_week3_contract(
+            rows,
+            root,
+            ingest=ingest_w3,
+            lineage_jsonl=lineage_jsonl,
+            subscriptions_yaml=subscriptions_yaml,
+        )
         write_yaml(out_dir / "week3_extractions.yaml", contract)
         _write_week3_dbt(out_dir)
         _write_schema_snapshot(contract["id"], contract.get("schema", {}), root)
@@ -1118,7 +1180,13 @@ def run_single_source(source: Path, out_dir: Path, root: Path) -> None:
             **_ingest_block(issues, len(rows)),
             "type_anomalies": _week5_ingest_anomalies(rows),
         }
-        contract = build_week5_contract(rows, root, ingest=ingest_w5)
+        contract = build_week5_contract(
+            rows,
+            root,
+            ingest=ingest_w5,
+            lineage_jsonl=lineage_jsonl,
+            subscriptions_yaml=subscriptions_yaml,
+        )
         write_yaml(out_dir / "week5_events.yaml", contract)
         _write_week5_dbt(out_dir)
         _write_event_payload_schema(root)
@@ -1140,12 +1208,18 @@ def run_all(root: Path, out_dir: Path) -> None:
 
     w3, i3 = load_jsonl_with_issues(root / "outputs" / "week3" / "extractions.jsonl")
     ingest_w3 = {**_ingest_block(i3, len(w3)), "type_anomalies": _week3_ingest_anomalies(w3)}
-    write_yaml(out_dir / "week3_extractions.yaml", build_week3_contract(w3, root, ingest=ingest_w3))
+    write_yaml(
+        out_dir / "week3_extractions.yaml",
+        build_week3_contract(w3, root, ingest=ingest_w3, lineage_jsonl=None, subscriptions_yaml=None),
+    )
     _write_week3_dbt(out_dir)
 
     w5, i5 = load_jsonl_with_issues(root / "outputs" / "week5" / "events.jsonl")
     ingest_w5 = {**_ingest_block(i5, len(w5)), "type_anomalies": _week5_ingest_anomalies(w5)}
-    write_yaml(out_dir / "week5_events.yaml", build_week5_contract(w5, root, ingest=ingest_w5))
+    write_yaml(
+        out_dir / "week5_events.yaml",
+        build_week5_contract(w5, root, ingest=ingest_w5, lineage_jsonl=None, subscriptions_yaml=None),
+    )
     _write_week5_dbt(out_dir)
     _write_event_payload_schema(root)
 
@@ -1156,8 +1230,18 @@ def run_all(root: Path, out_dir: Path) -> None:
     write_yaml(out_dir / "langsmith_traces.yaml", build_langsmith_contract(tr, root))
 
     for cid, sch in [
-        ("week3-document-refinery-extractions", build_week3_contract(w3, root, ingest=ingest_w3).get("schema", {})),
-        ("week5-event-sourcing-events", build_week5_contract(w5, root, ingest=ingest_w5).get("schema", {})),
+        (
+            "week3-document-refinery-extractions",
+            build_week3_contract(w3, root, ingest=ingest_w3, lineage_jsonl=None, subscriptions_yaml=None).get(
+                "schema", {}
+            ),
+        ),
+        (
+            "week5-event-sourcing-events",
+            build_week5_contract(w5, root, ingest=ingest_w5, lineage_jsonl=None, subscriptions_yaml=None).get(
+                "schema", {}
+            ),
+        ),
         ("week4-brownfield-lineage-snapshots", build_week4_contract(w4, root).get("schema", {})),
     ]:
         _write_schema_snapshot(cid, sch, root)
@@ -1184,6 +1268,18 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="ContractGenerator (Week 7)")
     parser.add_argument("--source", type=Path, help="Path to a JSONL file (week3 extractions or week5 events).")
     parser.add_argument("--output", type=Path, default=Path("generated_contracts"), help="Output directory for YAML/dbt.")
+    parser.add_argument(
+        "--lineage",
+        type=Path,
+        default=None,
+        help="Optional lineage JSONL (default: outputs/week4/lineage_snapshots.jsonl).",
+    )
+    parser.add_argument(
+        "--registry",
+        type=Path,
+        default=None,
+        help="Optional contract_registry/subscriptions.yaml path (default: <repo>/contract_registry/subscriptions.yaml).",
+    )
     parser.add_argument("--all", action="store_true", help="Generate all standard contracts from outputs/.")
     args = parser.parse_args()
     root = repo_root()
@@ -1193,7 +1289,13 @@ def main() -> None:
     if args.all:
         run_all(root, out)
     else:
-        run_single_source(args.source, out, root)
+        run_single_source(
+            args.source,
+            out,
+            root,
+            lineage_jsonl=args.lineage,
+            subscriptions_yaml=args.registry,
+        )
 
 
 if __name__ == "__main__":

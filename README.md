@@ -134,4 +134,95 @@ GitHub Actions (`.github/workflows/ci.yml`) runs `generator --all`, ValidationRu
 
 ## DOMAIN_NOTES.md
 
-Phase 0 write-up (backward/compatible changes, Bitol examples, lineage blame chain, production failure modes) lives in `DOMAIN_NOTES.md`.
+Phase 0 write-up (backward/compatible changes, Bitol examples, trust boundary Q3, lineage blame chain, production failure modes) lives in `DOMAIN_NOTES.md`.
+
+---
+
+## Practitioner manual — full pipeline (Wednesday + Saturday checklist)
+
+Run from this repository root (the folder that contains `contracts/` and `outputs/`).
+
+**0. Prerequisites**
+
+```powershell
+pip install -r requirements.txt
+python scripts/seed_outputs.py
+```
+
+Verify inputs exist: `outputs/week3/extractions.jsonl`, `outputs/week4/lineage_snapshots.jsonl`, `outputs/week5/events.jsonl`, `outputs/traces/runs.jsonl`.
+
+**1. Registry**
+
+File: `contract_registry/subscriptions.yaml` (≥4 subscriptions, `breaking_fields` on each). Quick check:
+
+```powershell
+Select-String -Path contract_registry/subscriptions.yaml -Pattern subscriber_id
+```
+
+**2. Generate contracts (Week 3 + Week 5)**
+
+This repo uses contract ids `week3-document-refinery-extractions` and `week5-event-sourcing-events` (equivalent to the manual’s Week 5 event contract).
+
+```powershell
+python contracts/generator.py --source outputs/week3/extractions.jsonl --contract-id week3-document-refinery-extractions --lineage outputs/week4/lineage_snapshots.jsonl --registry contract_registry/subscriptions.yaml --output generated_contracts/
+python contracts/generator.py --source outputs/week5/events.jsonl --contract-id week5-event-sourcing-events --lineage outputs/week4/lineage_snapshots.jsonl --registry contract_registry/subscriptions.yaml --output generated_contracts/
+```
+
+Expect: `generated_contracts/week3_extractions.yaml`, `generated_contracts/week5_events.yaml`, matching `*_dbt.yml`, and new folders under `schema_snapshots/<contract-id>/`.
+
+**3. Baseline validation (clean data, AUDIT)**
+
+```powershell
+python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions.jsonl --mode AUDIT --output validation_reports/clean.json
+```
+
+Expect: `validation_reports/clean.json` with failures appropriate to your data; `schema_snapshots/baselines.json` updated when the runner records numeric baselines.
+
+**4. Inject scale violation + ENFORCE run**
+
+```powershell
+python create_violation.py
+python contracts/runner.py --contract generated_contracts/week3_extractions.yaml --data outputs/week3/extractions_violated.jsonl --mode ENFORCE --output validation_reports/violated.json
+```
+
+Expect: `validation_reports/violated.json` includes **FAIL** for confidence **range** and **statistical_drift** (if baselines were established from the clean run).
+
+**5. Violation attributor (registry-first; manual-compatible flags)**
+
+`--violation` points at a ValidationRunner JSON report; only **FAIL/ERROR** `results[]` rows are converted and attributed (handy for the injected run). It does **not** merge the full historical `violations.jsonl`.
+
+```powershell
+python contracts/attributor.py --violation validation_reports/violated.json --lineage outputs/week4/lineage_snapshots.jsonl --registry contract_registry/subscriptions.yaml --output violation_log/violations_with_blame.jsonl
+```
+
+Or enrich the existing log:
+
+```powershell
+python contracts/attributor.py --input violation_log/violations.jsonl --lineage outputs/week4/lineage_snapshots.jsonl --registry contract_registry/subscriptions.yaml --output violation_log/violations_with_blame.jsonl
+```
+
+**6. Schema evolution (two snapshots under `schema_snapshots/<contract-id>/`)**
+
+```powershell
+python contracts/schema_analyzer.py --contract-id week3-document-refinery-extractions --output validation_reports/schema_evolution.json
+```
+
+**7. AI extensions**
+
+```powershell
+python contracts/ai_extensions.py --extractions outputs/week3/extractions.jsonl --verdicts outputs/week2/verdicts.jsonl --output validation_reports/ai_metrics.json --also-write-ai-extensions-name
+```
+
+**8. Enforcer report**
+
+```powershell
+python contracts/report_generator.py
+```
+
+Open `enforcer_report/report_data.json`. Verify `data_health_score` is between 0 and 100, `recommended_actions` reference real paths under this repository (e.g. `contracts/runner.py`, `src/week3/extractor.py`), and `top_violations_plain_language` / `violations_by_severity` align with `validation_reports/*.json`.
+
+**9. Tests**
+
+```powershell
+pytest -q
+```
