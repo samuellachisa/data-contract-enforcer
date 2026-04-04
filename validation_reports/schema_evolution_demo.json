@@ -1,0 +1,201 @@
+{
+  "contract_id": "week3-document-refinery-extractions",
+  "snapshot_a": "20260404_173239_198192",
+  "snapshot_b": "20260404_211155_950348",
+  "diff": {
+    "added": [],
+    "removed": [
+      "notes"
+    ],
+    "type_changes": [
+      {
+        "field": "extracted_facts",
+        "from": "object",
+        "to": "array"
+      }
+    ],
+    "breaking_changes": [
+      {
+        "change_type": "Change type (breaking)",
+        "field": "extracted_facts",
+        "from": "object",
+        "to": "array"
+      },
+      {
+        "change_type": "Remove column",
+        "field": "notes",
+        "verdict": "BREAKING"
+      }
+    ],
+    "compatible_changes": [],
+    "narrow_classifications": [],
+    "compatibility_verdict": "BREAKING"
+  },
+  "migration_impact": {
+    "contract_id": "week3-document-refinery-extractions",
+    "compatibility_verdict": "BREAKING",
+    "breaking_fields": [
+      "extracted_facts",
+      "notes"
+    ],
+    "diff": {
+      "added": [],
+      "removed": [
+        "notes"
+      ],
+      "type_changes": [
+        {
+          "field": "extracted_facts",
+          "from": "object",
+          "to": "array"
+        }
+      ],
+      "breaking_changes": [
+        {
+          "change_type": "Change type (breaking)",
+          "field": "extracted_facts",
+          "from": "object",
+          "to": "array"
+        },
+        {
+          "change_type": "Remove column",
+          "field": "notes",
+          "verdict": "BREAKING"
+        }
+      ],
+      "compatible_changes": [],
+      "narrow_classifications": [],
+      "compatibility_verdict": "BREAKING"
+    },
+    "migration_checklist": [
+      {
+        "task": "Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+        "owner": "downstream-team"
+      },
+      {
+        "task": "Update downstream consumer mappings for `notes` to match the new contract field type/requiredness.",
+        "owner": "downstream-team"
+      }
+    ],
+    "rollback_plan": "Rollback plan for `week3-document-refinery-extractions`: revert producer schema, pin consumers, and re-validate before re-attempting rollout.\nImmediate Actions:\n  - Revert or pin the producer deployment that introduced the incompatible schema snapshot.\n  - Restore the previous timestamped folder under `schema_snapshots/week3-document-refinery-extractions/` as the diff baseline.\n  - Stop promoting new JSONL batches written against the breaking schema until consumers are migrated.\nConsumer Coordination:\n  - Identify downstream owners via `contract_registry/subscriptions.yaml` (contact + subscriber_team).\n  - Roll back or feature-flag consumer services that read the affected fields before producer rollback completes.\nData Plane:\n  - Quarantine or replay-sanitize partial exports if any consumer ingested rows under the breaking schema.\nVerification After Rollback:\n  - Run `python contracts/runner.py --contract generated_contracts/*.yaml --data outputs/... --mode AUDIT`.\n  - Confirm `validation_reports/*.json` contain no FAIL on CRITICAL clauses for this contract.\n  - Regenerate Week 4 lineage and run `python contracts/attributor.py` on a sample violation to confirm graph health.\nDocumentation:\n  - Record the incident and the exact snapshot pair in `validation_reports/migration_impact_*.json` for audit.",
+    "rollback_plan_sections": {
+      "summary": "Rollback plan for `week3-document-refinery-extractions`: revert producer schema, pin consumers, and re-validate before re-attempting rollout.",
+      "immediate_actions": [
+        "Revert or pin the producer deployment that introduced the incompatible schema snapshot.",
+        "Restore the previous timestamped folder under `schema_snapshots/week3-document-refinery-extractions/` as the diff baseline.",
+        "Stop promoting new JSONL batches written against the breaking schema until consumers are migrated."
+      ],
+      "consumer_coordination": [
+        "Identify downstream owners via `contract_registry/subscriptions.yaml` (contact + subscriber_team).",
+        "Roll back or feature-flag consumer services that read the affected fields before producer rollback completes."
+      ],
+      "data_plane": [
+        "Quarantine or replay-sanitize partial exports if any consumer ingested rows under the breaking schema."
+      ],
+      "verification_after_rollback": [
+        "Run `python contracts/runner.py --contract generated_contracts/*.yaml --data outputs/... --mode AUDIT`.",
+        "Confirm `validation_reports/*.json` contain no FAIL on CRITICAL clauses for this contract.",
+        "Regenerate Week 4 lineage and run `python contracts/attributor.py` on a sample violation to confirm graph health."
+      ],
+      "documentation": [
+        "Record the incident and the exact snapshot pair in `validation_reports/migration_impact_*.json` for audit."
+      ],
+      "scale_change_specific": [],
+      "escalation": []
+    },
+    "per_consumer_failure_modes": [
+      {
+        "subscriber_id": "week4-cartographer",
+        "subscriber_team": "week4",
+        "fields_consumed": [
+          "doc_id",
+          "extracted_facts",
+          "extraction_model"
+        ],
+        "registry_breaking_fields_triggered": [
+          {
+            "field": "extracted_facts.non_empty",
+            "reason": "clause week3.extracted_facts.non_empty"
+          },
+          {
+            "field": "extracted_facts.confidence.range",
+            "reason": "clause week3.extracted_facts.confidence.range"
+          },
+          {
+            "field": "extracted_facts.entity_refs.relationship",
+            "reason": "clause week3.extracted_facts.entity_refs.relationship"
+          },
+          {
+            "field": "extracted_facts.confidence.drift_baseline",
+            "reason": "clause week3.extracted_facts.confidence.drift_baseline"
+          },
+          {
+            "field": "extracted_facts.confidence.statistical_drift",
+            "reason": "clause week3.extracted_facts.confidence.statistical_drift"
+          },
+          {
+            "field": "extracted_facts.text.embedding_drift",
+            "reason": "clause week3.extracted_facts.text.embedding_drift (contracts/ai_extensions.py embedding drift)"
+          }
+        ],
+        "likely_failure_modes": [
+          "Registry clause `extracted_facts.non_empty` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'extraction_model']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.confidence.range` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'extraction_model']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.entity_refs.relationship` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'extraction_model']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.confidence.drift_baseline` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'extraction_model']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.confidence.statistical_drift` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'extraction_model']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.text.embedding_drift` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'extraction_model']. ValidationRunner / cross-checks on that path may FAIL until aligned."
+        ],
+        "lineage_note": "Regenerate `outputs/week4/lineage_snapshots.jsonl` after producer schema changes so FILE/PIPELINE nodes and edges match the deployed code paths."
+      },
+      {
+        "subscriber_id": "week7-data-contract-enforcer",
+        "subscriber_team": "week7",
+        "fields_consumed": [
+          "doc_id",
+          "extracted_facts",
+          "entities",
+          "extraction_model",
+          "processing_time_ms",
+          "source_hash"
+        ],
+        "registry_breaking_fields_triggered": [
+          {
+            "field": "extracted_facts.non_empty",
+            "reason": "clause week3.extracted_facts.non_empty"
+          },
+          {
+            "field": "extracted_facts.confidence.range",
+            "reason": "clause week3.extracted_facts.confidence.range"
+          },
+          {
+            "field": "extracted_facts.entity_refs.relationship",
+            "reason": "clause week3.extracted_facts.entity_refs.relationship"
+          },
+          {
+            "field": "extracted_facts.confidence.drift_baseline",
+            "reason": "clause week3.extracted_facts.confidence.drift_baseline"
+          },
+          {
+            "field": "extracted_facts.confidence.statistical_drift",
+            "reason": "clause week3.extracted_facts.confidence.statistical_drift"
+          },
+          {
+            "field": "extracted_facts.text.embedding_drift",
+            "reason": "clause week3.extracted_facts.text.embedding_drift (contracts/ai_extensions.py embedding drift)"
+          }
+        ],
+        "likely_failure_modes": [
+          "Registry clause `extracted_facts.non_empty` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'entities', 'extraction_model', 'processing_time_ms', 'source_hash']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.confidence.range` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'entities', 'extraction_model', 'processing_time_ms', 'source_hash']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.entity_refs.relationship` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'entities', 'extraction_model', 'processing_time_ms', 'source_hash']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.confidence.drift_baseline` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'entities', 'extraction_model', 'processing_time_ms', 'source_hash']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.confidence.statistical_drift` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'entities', 'extraction_model', 'processing_time_ms', 'source_hash']. ValidationRunner / cross-checks on that path may FAIL until aligned.",
+          "Registry clause `extracted_facts.text.embedding_drift` likely implicated; consumed fields ['doc_id', 'extracted_facts', 'entities', 'extraction_model', 'processing_time_ms', 'source_hash']. ValidationRunner / cross-checks on that path may FAIL until aligned."
+        ],
+        "lineage_note": "Regenerate `outputs/week4/lineage_snapshots.jsonl` after producer schema changes so FILE/PIPELINE nodes and edges match the deployed code paths."
+      }
+    ]
+  },
+  "classification_taxonomy_used": "nested JSON-Schema diff: type/required/format/pattern/min/max/enum/minItems/maxItems; nested properties/items; top-level add/remove; breaking vs compatible adds; narrow_type SCALE_CHANGE_CRITICAL for 0\u20131 unit interval to ~0\u2013100 scale."
+}

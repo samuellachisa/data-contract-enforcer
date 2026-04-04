@@ -10,7 +10,8 @@
   },
   "prompt_input_validation": {
     "quarantined_count": 0,
-    "status": "PASS"
+    "status": "PASS",
+    "content_preview_max_length": 8000
   },
   "langsmith_traces": {
     "total_traces": 30,
@@ -24,5 +25,13 @@
   "trend": "stable",
   "baseline_violation_rate": 0.0,
   "status": "PASS",
-  "timestamp": "2026-04-04T17:32:49Z"
+  "timestamp": "2026-04-04T21:12:17Z",
+  "ai_extension_config": {
+    "embedding_drift_threshold": 0.15,
+    "embedding_sample_size": 200,
+    "llm_violation_trend_multiplier": 1.5,
+    "llm_violation_trend_min_delta": 0.001,
+    "prompt_preview_max_length": 8000,
+    "hashing_n_features": 384
+  }
 }

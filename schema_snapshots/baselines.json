@@ -18,5 +18,26 @@
   "week2-digital-courtroom-verdicts::confidence.mean": {
     "mean": 0.7991999999999999,
     "std": 0.09661966673509075
+  },
+  "week3-document-refinery-extractions::generator.numeric.extracted_facts.confidence": {
+    "mean": 0.44666667,
+    "stddev": 0.13670731,
+    "std": 0.13670731,
+    "source": "contract_generator",
+    "updated_at": "2026-04-04T23:19:37Z"
+  },
+  "week3-document-refinery-extractions::generator.numeric.processing_time_ms": {
+    "mean": 26514.33333333,
+    "stddev": 22668.96101623,
+    "std": 22668.96101623,
+    "source": "contract_generator",
+    "updated_at": "2026-04-04T23:19:37Z"
+  },
+  "week3-document-refinery-extractions::generator.numeric.extracted_facts.entity_count": {
+    "mean": 2.0,
+    "stddev": 0.0,
+    "std": 0.0,
+    "source": "contract_generator",
+    "updated_at": "2026-04-04T23:19:37Z"
   }
 }

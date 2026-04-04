@@ -1,21 +1,21 @@
 {
-  "report_generated_at": "2026-04-04T21:02:24Z",
-  "generated_at": "2026-04-04T21:02:24Z",
+  "report_generated_at": "2026-04-04T21:12:42Z",
+  "generated_at": "2026-04-04T21:12:42Z",
   "period": "2026-03-28 to 2026-04-04",
   "sources_used": {
     "week3_validation": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\week3_latest.json",
     "week5_validation": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\week5_latest.json",
     "ai_metrics": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\ai_metrics.json",
     "violations": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\violation_log\\violations_with_blame.jsonl",
-    "migration_report": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\migration_impact_week3-document-refinery-extractions_20260404_141244.json"
+    "migration_report": "C:\\Users\\SAMILA\\Documents\\Projects\\Personal\\tenx\\Week 7\\Week 7 (Data Contract Enforcer)\\validation_reports\\migration_impact_week3-document-refinery-extractions_20260404_211226.json"
   },
-  "executive_summary": "This run aggregated 35 contract checks across the selected Week 3 and Week 5 reports (100.0% PASS on those two). Data health score is 100.0/100 using severity-weighted deductions over all structured validation JSON in validation_reports/ (0 failing check rows). Review violations, schema drift, and AI metrics for prioritized fixes.",
+  "executive_summary": "This run aggregated 35 contract checks across the selected Week 3 and Week 5 reports (100.0% PASS on those two). Data health score is 70.0/100 using severity-weighted deductions over all structured validation JSON in validation_reports/ (2 failing check rows). Review violations, schema drift, and AI metrics for prioritized fixes.",
   "registry_subscriber_impact": {
     "violations_with_blast_radius": 0,
     "max_subscribers_on_single_violation": 0,
     "total_subscriber_rows_across_violations": 0
   },
-  "data_health_score": 100.0,
+  "data_health_score": 70.0,
   "data_health_score_breakdown": {
     "severity_deductions_table": {
       "CRITICAL": 20,
@@ -33,14 +33,32 @@
       "cross.": 1.0,
       "default": 1.0
     },
-    "per_failing_check": []
+    "per_failing_check": [
+      {
+        "check_id": "week3.extracted_facts.confidence.range",
+        "severity": "CRITICAL",
+        "base_deduction": 20.0,
+        "type_weight": 1.0,
+        "applied_deduction": 20.0
+      },
+      {
+        "check_id": "week3.extracted_facts.confidence.statistical_drift",
+        "severity": "HIGH",
+        "base_deduction": 10.0,
+        "type_weight": 1.0,
+        "applied_deduction": 10.0
+      }
+    ]
   },
-  "n_critical_contract_violations": 0,
-  "data_health_narrative": "Score 100.0/100 from 0 failed check(s) across validation_reports/*.json (manual rubric deductions). All sampled systems operating within contract parameters.",
-  "top_violations_plain_language": [],
+  "n_critical_contract_violations": 1,
+  "data_health_narrative": "Score 70.0/100 from 2 failed check(s) across validation_reports/*.json (manual rubric deductions). 1 critical issue(s) require immediate action.",
+  "top_violations_plain_language": [
+    "The 'extracted_facts[*].confidence' field failed its range check. Expected max<=1.0, min>=0.0, found max=97.000, mean=72.382, min=50.000. Downstream subscribers affected: week4-cartographer, week7-data-contract-enforcer. Records failing: 55.",
+    "The 'extracted_facts[*].confidence' field failed its drift check. Expected WARN if >2\u03c3, FAIL if >3\u03c3, found current_mean=72.3818, baseline_mean=0.7238, dev_sigma=501.68. Downstream subscribers affected: week4-cartographer, week7-data-contract-enforcer. Records failing: 0."
+  ],
   "violations_by_severity": {
-    "CRITICAL": 0,
-    "HIGH": 0,
+    "CRITICAL": 1,
+    "HIGH": 1,
     "MEDIUM": 0
   },
   "ai_risk": {
@@ -51,28 +69,50 @@
   "violations_pagination": {
     "page": 0,
     "page_size": 3,
-    "total_violations": 0,
+    "total_violations": 2,
     "total_pages": 1,
-    "returned_count": 0,
+    "returned_count": 2,
     "sort": "severity_then_records_failing_then_check_id"
   },
-  "violations_this_week": [],
+  "violations_this_week": [
+    {
+      "severity": "CRITICAL",
+      "description": "Week 3 Document Refinery: `extracted_facts[*].confidence` must stay a float in 0.0\u20131.0. Downstream systems that interpret confidence as a probability (Week 4 lineage attribution and any scoring consumers) may mis-rank or mis-blame changes.",
+      "check_id": "week3.extracted_facts.confidence.range",
+      "field": "extracted_facts[*].confidence",
+      "records_failing": 55
+    },
+    {
+      "severity": "HIGH",
+      "description": "Statistical drift vs first-run baseline.",
+      "check_id": "week3.extracted_facts.confidence.statistical_drift",
+      "field": "extracted_facts[*].confidence",
+      "records_failing": 0
+    }
+  ],
   "schema_changes_detected": [
     "week3-document-refinery-extractions: compatibility_verdict=BREAKING.",
     "week3-document-refinery-extractions: breaking field `extracted_facts`.",
+    "week3-document-refinery-extractions: breaking field `notes`.",
     "week3-document-refinery-extractions: migration task \u2014 Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
-    "week3-document-refinery-extractions: rollback \u2014 Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete."
+    "week3-document-refinery-extractions: migration task \u2014 Update downstream consumer mappings for `notes` to match the new contract field type/requiredness.",
+    "week3-document-refinery-extractions: rollback \u2014 Rollback plan for `week3-document-refinery-extractions`: revert producer schema, pin consumers, and re-validate before re-attempting rollout.\nImmediate Actions:\n  - Revert or pin the producer deployment that introduced the incompatible schema snapshot.\n  - Restore the previous ti..."
   ],
   "schema_evolution_summary": {
     "contract_id": "week3-document-refinery-extractions",
     "compatibility_verdict": "BREAKING",
     "breaking_fields": [
-      "extracted_facts"
+      "extracted_facts",
+      "notes"
     ],
-    "rollback_plan": "Pin producer to the previous schema snapshot and roll back consumer deployments until migrations are complete.",
+    "rollback_plan": "Rollback plan for `week3-document-refinery-extractions`: revert producer schema, pin consumers, and re-validate before re-attempting rollout.\nImmediate Actions:\n  - Revert or pin the producer deployment that introduced the incompatible schema snapshot.\n  - Restore the previous timestamped folder under `schema_snapshots/week3-document-refinery-extractions/` as the diff baseline.\n  - Stop promoting new JSONL batches written against the breaking schema until consumers are migrated.\nConsumer Coordination:\n  - Identify downstream owners via `contract_registry/subscriptions.yaml` (contact + subscriber_team).\n  - Roll back or feature-flag consumer services that read the affected fields before producer rollback completes.\nData Plane:\n  - Quarantine or replay-sanitize partial exports if any consumer ingested rows under the breaking schema.\nVerification After Rollback:\n  - Run `python contracts/runner.py --contract generated_contracts/*.yaml --data outputs/... --mode AUDIT`.\n  - Confirm `validation_reports/*.json` contain no FAIL on CRITICAL clauses for this contract.\n  - Regenerate Week 4 lineage and run `python contracts/attributor.py` on a sample violation to confirm graph health.\nDocumentation:\n  - Record the incident and the exact snapshot pair in `validation_reports/migration_impact_*.json` for audit.",
     "checklist_preview": [
       {
         "task": "Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness.",
+        "owner": "downstream-team"
+      },
+      {
+        "task": "Update downstream consumer mappings for `notes` to match the new contract field type/requiredness.",
         "owner": "downstream-team"
       }
     ]
@@ -90,7 +130,7 @@
     {
       "priority": 2,
       "risk_reduction": "Medium",
-      "action": "Close BREAKING evolution on contract `week3-document-refinery-extractions`, field `extracted_facts`: compare timestamped `schema_snapshots/week3-document-refinery-extractions/*/schema.yaml`, then read `validation_reports/schema_evolution_week3.json` and the newest `validation_reports/migration_impact_*.json`. Update consumers such as `src/week4/cartographer.py` to match the deployed shape; after editing `generated_contracts/week3_extractions.yaml`, re-run `contracts/schema_analyzer.py`. Current snapshot/migration signals: week3-document-refinery-extractions: compatibility_verdict=BREAKING; week3-document-refinery-extractions: breaking field `extracted_facts`; week3-document-refinery-extractions: migration task \u2014 Update downstream consumer mappings for `extracted_facts` to match the new contract field type/requiredness."
+      "action": "Close BREAKING evolution on contract `week3-document-refinery-extractions`, field `extracted_facts`: compare timestamped `schema_snapshots/week3-document-refinery-extractions/*/schema.yaml`, then read `validation_reports/schema_evolution_week3.json` and the newest `validation_reports/migration_impact_*.json`. Update consumers such as `src/week4/cartographer.py` to match the deployed shape; after editing `generated_contracts/week3_extractions.yaml`, re-run `contracts/schema_analyzer.py`. Current snapshot/migration signals: week3-document-refinery-extractions: compatibility_verdict=BREAKING; week3-document-refinery-extractions: breaking field `extracted_facts`; week3-document-refinery-extractions: breaking field `notes`."
     },
     {
       "priority": 4,

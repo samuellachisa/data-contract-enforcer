@@ -1,0 +1,119 @@
+contract_id: week3-document-refinery-extractions
+captured_at: '2026-04-04T21:11:55Z'
+schema:
+  doc_id:
+    type: string
+    format: uuid
+    required: true
+    unique: true
+    description: Primary key. UUIDv4 per document extraction run.
+  source_path:
+    type: string
+    required: true
+    minLength: 1
+    description: Absolute path or https URL of source document.
+  source_hash:
+    type: string
+    pattern: ^[a-f0-9]{64}$
+    required: true
+    description: SHA-256 of the source file.
+  extracted_facts:
+    type: array
+    minItems: 1
+    required: true
+    description: Array of fact objects; items follow JSON Schema draft-07 object form.
+    items:
+      type: object
+      additionalProperties: false
+      required:
+      - fact_id
+      - text
+      - entity_refs
+      - confidence
+      - source_excerpt
+      properties:
+        fact_id:
+          type: string
+          format: uuid
+          description: Unique fact id within the extraction record.
+          unique: true
+        text:
+          type: string
+          minLength: 1
+        entity_refs:
+          type: array
+          items:
+            type: string
+            format: uuid
+        confidence:
+          type: number
+          minimum: 0.0
+          maximum: 1.0
+          description: Model confidence; breaking if scaled to 0–100 integer.
+        page_ref:
+          oneOf:
+          - type: integer
+            minimum: 1
+          - type: 'null'
+          description: 1-based page index when applicable; null otherwise.
+        source_excerpt:
+          type: string
+          minLength: 1
+  entities:
+    type: array
+    required: true
+    minItems: 1
+    items:
+      type: object
+      additionalProperties: false
+      required:
+      - entity_id
+      - name
+      - type
+      - canonical_value
+      properties:
+        entity_id:
+          type: string
+          format: uuid
+        name:
+          type: string
+          minLength: 1
+        type:
+          type: string
+          enum:
+          - PERSON
+          - ORG
+          - LOCATION
+          - DATE
+          - AMOUNT
+          - OTHER
+        canonical_value:
+          type: string
+          minLength: 1
+  extraction_model:
+    type: string
+    required: true
+    pattern: ^(claude|gpt)-
+    description: Model identifier; must match claude-* or gpt-*.
+  processing_time_ms:
+    type: integer
+    minimum: 1
+    required: true
+    description: Wall-clock processing time in milliseconds; must be positive.
+  token_count:
+    type: object
+    required: true
+    description: Non-negative input/output token counts; both keys required.
+    additionalProperties: false
+    properties:
+      input:
+        type: integer
+        minimum: 0
+      output:
+        type: integer
+        minimum: 0
+  extracted_at:
+    type: string
+    format: date-time
+    required: true
+    description: Extraction completion timestamp (RFC 3339 / ISO 8601 date-time).
